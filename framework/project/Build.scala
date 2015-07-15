@@ -84,7 +84,14 @@ object BuildSettings {
   val publishSettings = Seq(
     publishArtifact in packageDoc := buildWithDoc,
     publishArtifact in (Compile, packageSrc) := true,
-    publishTo := Some(publishingMavenRepository)
+    publishTo := Some {
+      val lucidRepo = "http://repo.lucidchart.com:8081/artifactory"
+      if (isSnapshot.value) {
+        "Lucid external releases" at s"$lucidRepo/libs-snapshot-local"
+      } else {
+        "Lucid internal releases" at s"$lucidRepo/libs-release-local"
+      }
+    }
   )
 
   def PlaySharedJavaProject(name: String, dir: String, testBinaryCompatibility: Boolean = false): Project = {
@@ -176,8 +183,10 @@ object Resolvers {
   val typesafeIvySnapshots = Resolver.url("Typesafe Ivy Snapshots Repository", url("https://repo.typesafe.com/typesafe/ivy-snapshots"))(Resolver.ivyStylePatterns)
   val publishTypesafeMavenReleases = "Typesafe Maven Releases Repository for publishing" at "https://private-repo.typesafe.com/typesafe/maven-releases/"
   val publishTypesafeMavenSnapshots = "Typesafe Maven Snapshots Repository for publishing" at "https://private-repo.typesafe.com/typesafe/maven-snapshots/"
-  val publishTypesafeIvyReleases = Resolver.url("Typesafe Ivy Releases Repository for publishing", url("https://private-repo.typesafe.com/typesafe/ivy-releases/"))(Resolver.ivyStylePatterns)
-  val publishTypesafeIvySnapshots = Resolver.url("Typesafe Ivy Snapshots Repository for publishing", url("https://private-repo.typesafe.com/typesafe/ivy-snapshots/"))(Resolver.ivyStylePatterns)
+  val publishTypesafeIvyReleases = Resolver.url("Lucid external releases", url("http://repo.lucidchart.com:8081/artifactory/ext-release-local"))(Resolver.ivyStylePatterns)
+  //val publishTypesafeIvyReleases = Resolver.url("Typesafe Ivy Releases Repository for publishing", url("https://private-repo.typesafe.com/typesafe/ivy-releases/"))(Resolver.ivyStylePatterns)
+  val publishTypesafeIvySnapshots = Resolver.url("Lucid external snapshots", url("http://repo.lucidchart.com:8081/artifactory/ext-snapshot-local"))(Resolver.ivyStylePatterns)
+  //val publishTypesafeIvySnapshots = Resolver.url("Typesafe Ivy Snapshots Repository for publishing", url("https://private-repo.typesafe.com/typesafe/ivy-snapshots/"))(Resolver.ivyStylePatterns)
 
   val sonatypeSnapshots = "Sonatype snapshots" at "https://oss.sonatype.org/content/repositories/snapshots/"
   // This is a security issue. This repository should not be loaded via http
