@@ -4,15 +4,15 @@
 package play.api.mvc {
 
   import play.api._
-  import play.api.http.{ MediaType, MediaRange, HeaderNames }
+  import play.api.http.{HeaderNames, MediaRange, MediaType}
   import play.api.i18n.Lang
   import play.api.libs.iteratee._
   import play.api.libs.Crypto
-
   import scala.annotation._
   import scala.util.control.NonFatal
   import scala.util.Try
-  import java.net.{ URLDecoder, URLEncoder }
+  import java.net.{URLDecoder, URLEncoder}
+  import scala.concurrent.Future
   import scala.concurrent.duration._
 
   /**
@@ -20,6 +20,7 @@ package play.api.mvc {
    */
   @implicitNotFound("Cannot find any HTTP Request Header here")
   trait RequestHeader {
+    self =>
 
     /**
      * The request ID.
@@ -79,6 +80,11 @@ package play.api.mvc {
      */
     def secure: Boolean
 
+    /**
+     * When the connection is closed
+     */
+    def isClientConnected: Boolean
+
     // -- Computed
 
     /**
@@ -125,6 +131,7 @@ package play.api.mvc {
 
     /**
      * Check if this request accepts a given media type.
+ *
      * @return true if `mimeType` matches the Accept header, otherwise false
      */
     def accepts(mimeType: String): Boolean = {
@@ -196,6 +203,7 @@ package play.api.mvc {
         val headers = _headers
         val remoteAddress = _remoteAddress
         val secure = _secure
+        override def isClientConnected = self.isClientConnected
       }
     }
 
@@ -255,6 +263,7 @@ package play.api.mvc {
       def remoteAddress = self.remoteAddress
       def secure = self.secure
       lazy val body = f(self.body)
+      override def isClientConnected = self.isClientConnected
     }
 
   }
@@ -274,6 +283,7 @@ package play.api.mvc {
       lazy val secure = rh.secure
       def username = None
       val body = a
+      override def isClientConnected = rh.isClientConnected
     }
   }
 
@@ -292,6 +302,7 @@ package play.api.mvc {
     def version = request.version
     def remoteAddress = request.remoteAddress
     def secure = request.secure
+    override def isClientConnected = request.isClientConnected
   }
 
   /**
