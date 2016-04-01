@@ -197,16 +197,12 @@ private[play] class PlayDefaultUpstreamHandler(server: Server, allChannels: Defa
         handler match {
           //execute normal action
           case Right((action: EssentialAction, app)) =>
-            val a = EssentialAction { rh =>
-              import play.api.libs.iteratee.Execution.Implicits.trampoline
-              Iteratee.flatten(action(rh).unflatten.map(_.it).recover {
-                case error =>
-                  Iteratee.flatten(
-                    app.handleError(requestHeader, error).map(result => Done(result, Input.Empty))
-                  ): Iteratee[Array[Byte], Result]
-              })
+            Play.logger.trace("Serving this request with: " + action)
+            import play.api.libs.iteratee.Execution.Implicits.trampoline
+            val bodyParser = action.async(requestHeader).recoverM[Result] {
+              case error => app.handleError(requestHeader, error)
             }
-            handleAction(a, Some(app))
+            handleBodyParser(bodyParser, Some(app))
 
           case Right((ws @ WebSocket(f), app)) if websocketableRequest.check =>
             Play.logger.trace("Serving this request with: " + ws)
@@ -217,8 +213,7 @@ private[play] class PlayDefaultUpstreamHandler(server: Server, allChannels: Defa
             executed.flatMap(identity).map {
               case Left(result) =>
                 // WebSocket was rejected, send result
-                val a = EssentialAction(_ => Done(result, Input.Empty))
-                handleAction(a, Some(app))
+                handleBodyParser(Done(result, Input.Empty), Some(app))
               case Right(socket) =>
                 val bufferLimit = app.configuration.getBytes("play.websocket.buffer.limit").getOrElse(65536L)
 
@@ -227,32 +222,23 @@ private[play] class PlayDefaultUpstreamHandler(server: Server, allChannels: Defa
             }.recover {
               case error =>
                 app.handleError(requestHeader, error).map { result =>
-                  val a = EssentialAction(_ => Done(result, Input.Empty))
-                  handleAction(a, Some(app))
+                  handleBodyParser(Done(result, Input.Empty), Some(app))
                 }
             }
 
           //handle bad websocket request
           case Right((WebSocket(_), app)) =>
             Play.logger.trace("Bad websocket request")
-            val a = EssentialAction(_ => Done(Results.BadRequest, Input.Empty))
-            handleAction(a, Some(app))
+            handleBodyParser(Done(Results.BadRequest, Input.Empty), Some(app))
 
           case Left(e) =>
             Play.logger.trace("No handler, got direct result: " + e)
             import play.api.libs.iteratee.Execution.Implicits.trampoline
-            val a = EssentialAction(_ => Iteratee.flatten(e.map(result => Done(result, Input.Empty))))
-            handleAction(a, None)
+            handleBodyParser(Iteratee.flatten(e.map(result => Done(result, Input.Empty))), None)
 
         }
 
-        def handleAction(action: EssentialAction, app: Option[Application]) {
-          Play.logger.trace("Serving this request with: " + action)
-
-          val bodyParser = Iteratee.flatten(
-            scala.concurrent.Future(action(requestHeader))(play.api.libs.concurrent.Execution.defaultContext)
-          )
-
+        def handleBodyParser(bodyParser: Iteratee[Array[Byte], Result], app: Option[Application]) {
           import play.api.libs.iteratee.Execution.Implicits.trampoline
 
           val expectContinue: Option[_] = requestHeader.headers.get("Expect").filter(_.equalsIgnoreCase("100-continue"))
