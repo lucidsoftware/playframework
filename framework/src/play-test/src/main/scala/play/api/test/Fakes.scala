@@ -29,6 +29,7 @@ case class FakeHeaders(override val data: Seq[(String, Seq[String])] = Seq.empty
  * @param remoteAddress The client IP.
  */
 case class FakeRequest[A](method: String, uri: String, headers: FakeHeaders, body: A, remoteAddress: String = "127.0.0.1", version: String = "HTTP/1.1", id: Long = 666, tags: Map[String, String] = Map.empty[String, String], secure: Boolean = false) extends Request[A] {
+  self =>
 
   private def _copy[B](
     id: Long = this.id,
@@ -43,7 +44,9 @@ case class FakeRequest[A](method: String, uri: String, headers: FakeHeaders, bod
     body: B = this.body): FakeRequest[B] = {
     new FakeRequest[B](
       method, uri, headers, body, remoteAddress, version, id, tags, secure
-    )
+    ) {
+      override def isClientConnected = self.isClientConnected
+    }
   }
 
   /**
@@ -56,6 +59,8 @@ case class FakeRequest[A](method: String, uri: String, headers: FakeHeaders, bod
    */
   lazy val queryString: Map[String, Seq[String]] =
     play.core.parsers.FormUrlEncodedParser.parse(rawQueryString)
+
+  def isClientConnected = true
 
   /**
    * Constructs a new request with additional headers. Any existing headers of the same name will be replaced.

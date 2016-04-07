@@ -86,6 +86,9 @@ private[play] class PlayDefaultUpstreamHandler(server: Server, allChannels: Defa
         val nettyUri = new QueryStringDecoder(nettyHttpRequest.getUri)
         val rHeaders = getHeaders(nettyHttpRequest)
 
+        // Call onRequestCompletion after all request processing is done. Protected with an AtomicBoolean to ensure can't be executed more than once.
+        val alreadyClean = new java.util.concurrent.atomic.AtomicBoolean(false)
+
         def rRemoteAddress = e.getRemoteAddress match {
           case ra: java.net.InetSocketAddress =>
             val remoteAddress = ra.getAddress.getHostAddress
@@ -129,6 +132,7 @@ private[play] class PlayDefaultUpstreamHandler(server: Server, allChannels: Defa
             lazy val remoteAddress = rRemoteAddress
             lazy val secure = rSecure
             def username = None
+            def isClientConnected = alreadyClean.get
           }
           untaggedRequestHeader
         }
@@ -160,8 +164,6 @@ private[play] class PlayDefaultUpstreamHandler(server: Server, allChannels: Defa
             }
           )
 
-        // Call onRequestCompletion after all request processing is done. Protected with an AtomicBoolean to ensure can't be executed more than once.
-        val alreadyClean = new java.util.concurrent.atomic.AtomicBoolean(false)
         def cleanup() {
           if (!alreadyClean.getAndSet(true)) {
             play.api.Play.maybeApplication.foreach(_.global.onRequestCompletion(requestHeader))

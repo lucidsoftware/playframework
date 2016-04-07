@@ -54,5 +54,6 @@ class RequestHeaderSpec extends Specification {
     def remoteAddress = ""
     def secure = false
     lazy val headers = new Headers { val data = headersMap.toSeq }
+    val isClientConnected = true
   }
 }
