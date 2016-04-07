@@ -8,6 +8,7 @@ import play.api._
 import play.core.Router.{ HandlerInvoker, HandlerInvokerFactory }
 import scala.concurrent._
 import scala.language.higherKinds
+import scala.util.Try
 
 /**
  * An Handler handles a request. Play understands several types of handlers,
@@ -65,6 +66,11 @@ class HandlerRef[T](call: => T, handlerDef: play.core.Router.HandlerDef)(implici
 trait EssentialAction extends (RequestHeader => Iteratee[Array[Byte], Result]) with Handler {
 
   /**
+    * Obtain the Iteratee without blocking the current thread.
+    */
+  def async(rh: RequestHeader) = Iteratee.flatten(Future(apply(rh))(play.api.libs.concurrent.Execution.defaultContext))
+
+  /**
    * Returns itself, for better support in the routes file.
    *
    * @return itself
@@ -81,6 +87,26 @@ object EssentialAction {
   def apply(f: RequestHeader => Iteratee[Array[Byte], Result]): EssentialAction = new EssentialAction {
     def apply(rh: RequestHeader) = f(rh)
   }
+}
+
+/**
+ * A action that is semantically guaranteed to be non-blocking.
+ */
+trait ImmediateAction extends EssentialAction {
+
+  /**
+   * Since apply(RequestHeader) is non-blocking, avoid using any other executor at all.
+   */
+  override def async(rh: RequestHeader) = apply(rh)
+
+}
+
+object ImmediateAction {
+
+  def apply(f: RequestHeader => Iteratee[Array[Byte], Result]) = new ImmediateAction {
+    def apply(rh: RequestHeader) = f(rh)
+  }
+
 }
 
 /**
