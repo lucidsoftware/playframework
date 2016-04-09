@@ -132,7 +132,7 @@ private[play] class PlayDefaultUpstreamHandler(server: Server, allChannels: Defa
             lazy val remoteAddress = rRemoteAddress
             lazy val secure = rSecure
             def username = None
-            def isClientConnected = alreadyClean.get
+            def isClientConnected = !alreadyClean.get
           }
           untaggedRequestHeader
         }
