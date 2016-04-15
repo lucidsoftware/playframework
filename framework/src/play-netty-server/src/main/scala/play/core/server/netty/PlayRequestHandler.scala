@@ -27,6 +27,11 @@ import play.core.system.RequestIdProvider
 import scala.concurrent.Future
 import scala.util.{ Failure, Success }
 
+import play.api.mvc._
+import play.api.libs.iteratee._
+import akka.util.ByteString
+import scala.concurrent.ExecutionContext
+
 private object PlayRequestHandler {
   private val logger: Logger = Logger(classOf[PlayRequestHandler])
 }
@@ -90,17 +95,21 @@ private[play] class PlayRequestHandler(val server: NettyServer) extends ChannelI
 
     }
 
+    def bodyParser(action: EssentialAction, app: Application)(implicit mat: Materializer): Accumulator[ByteString, Result] = {
+      Accumulator.flatten(
+        Future(action.apply(requestHeader))(play.api.libs.concurrent.Execution.defaultContext)
+      ).recoverWith {
+          case error => app.errorHandler.onServerError(requestHeader, error)
+        }
+    }
+
     resultOrHandler match {
 
       //execute normal action
       case Right((action: EssentialAction, app)) =>
-        val recovered = EssentialAction { rh =>
-          import play.api.libs.iteratee.Execution.Implicits.trampoline
-          action(rh).recoverWith {
-            case error => app.errorHandler.onServerError(rh, error)
-          }
-        }
-        handleAction(recovered, requestHeader, request, Some(app))
+        import app.materializer
+        import play.api.libs.iteratee.Execution.Implicits.trampoline
+        handleBodyParser(bodyParser(action, app), requestHeader, request, Some(app))
 
       case Right((ws: WebSocket, app)) if requestHeader.headers.get(HeaderNames.UPGRADE).exists(_.equalsIgnoreCase("websocket")) =>
         logger.trace("Serving this request with: " + ws)
@@ -113,13 +122,12 @@ private[play] class PlayRequestHandler(val server: NettyServer) extends ChannelI
         val executed = Future(ws(requestHeader))(play.api.libs.concurrent.Execution.defaultContext)
 
         import play.api.libs.iteratee.Execution.Implicits.trampoline
+        import app.materializer
         executed.flatMap(identity).flatMap {
           case Left(result) =>
             // WebSocket was rejected, send result
-            val action = EssentialAction(_ => Accumulator.done(result))
-            handleAction(action, requestHeader, request, Some(app))
+            handleBodyParser(Accumulator.done(result), requestHeader, request, Some(app))
           case Right(flow) =>
-            import app.materializer
             val processor = WebSocketHandler.messageFlowToFrameProcessor(flow, bufferLimit)
             Future.successful(new DefaultWebSocketHttpResponse(request.getProtocolVersion, HttpResponseStatus.OK,
               processor, factory))
@@ -128,25 +136,25 @@ private[play] class PlayRequestHandler(val server: NettyServer) extends ChannelI
           case error =>
             app.errorHandler.onServerError(requestHeader, error).flatMap { result =>
               val action = EssentialAction(_ => Accumulator.done(result))
-              handleAction(action, requestHeader, request, Some(app))
+              handleBodyParser(Accumulator.done(result), requestHeader, request, Some(app))
             }
         }
 
       //handle bad websocket request
       case Right((ws: WebSocket, app)) =>
         logger.trace("Bad websocket request")
+        import app.materializer
         val action = EssentialAction(_ => Accumulator.done(
           Results.Status(Status.UPGRADE_REQUIRED)("Upgrade to WebSocket required").withHeaders(
             HeaderNames.UPGRADE -> "websocket",
             HeaderNames.CONNECTION -> HeaderNames.UPGRADE
           )
         ))
-        handleAction(action, requestHeader, request, Some(app))
+        handleBodyParser(bodyParser(action, app), requestHeader, request, Some(app))
 
       case Left(e) =>
         logger.trace("No handler, got direct result: " + e)
-        val action = EssentialAction(_ => Accumulator.done(e))
-        handleAction(action, requestHeader, request, None)
+        handleBodyParser(Accumulator.done(e), requestHeader, request, None)
 
     }
   }
@@ -244,13 +252,23 @@ private[play] class PlayRequestHandler(val server: NettyServer) extends ChannelI
   /**
    * Handle an essential action.
    */
-  private def handleAction(action: EssentialAction, requestHeader: RequestHeader,
+  private def shandleAction(action: EssentialAction, requestHeader: RequestHeader,
     request: HttpRequest, app: Option[Application]): Future[HttpResponse] = {
     implicit val mat: Materializer = app.fold(server.materializer)(_.materializer)
     import play.api.libs.iteratee.Execution.Implicits.trampoline
 
-    val body = modelConversion.convertRequestBody(request)
     val bodyParser = action(requestHeader)
+
+    handleBodyParser(bodyParser, requestHeader, request, app)
+  }
+
+  private def handleBodyParser(bodyParser: Accumulator[ByteString, Result], requestHeader: RequestHeader,
+    request: HttpRequest, app: Option[Application]): Future[HttpResponse] = {
+
+    implicit val mat: Materializer = app.fold(server.materializer)(_.materializer)
+    import play.api.libs.iteratee.Execution.Implicits.trampoline
+
+    val body = modelConversion.convertRequestBody(request)
     val resultFuture = body match {
       case None =>
         bodyParser.run()

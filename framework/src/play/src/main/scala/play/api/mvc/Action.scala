@@ -38,6 +38,12 @@ trait RequestTaggingHandler extends Handler {
  */
 trait EssentialAction extends (RequestHeader => Accumulator[ByteString, Result]) with Handler { self =>
 
+  // /**
+  //  * Obtain the Iteratee without blocking the current thread.
+  //  */
+  // import akka.stream.Materializer
+  // def async(rh: RequestHeader, mat: Materializer) = Accumulator.flatten(Future(apply(rh))(play.api.libs.concurrent.Execution.defaultContext))(mat)
+
   /**
    * Returns itself, for better support in the routes file.
    *
