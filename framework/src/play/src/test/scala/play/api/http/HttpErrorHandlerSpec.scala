@@ -1,13 +1,15 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.http
+
+import java.util.concurrent.CompletableFuture
 
 import org.specs2.mutable.Specification
 import play.api.inject.BindingKey
 import play.api.{ OptionalSourceMapper, Configuration, Mode, Environment }
 import play.api.mvc.{ Results, RequestHeader }
-import play.core.Router
+import play.api.routing._
 import play.core.test.{ FakeRequest, Fakes }
 
 import scala.concurrent.{ Await, Future }
@@ -67,7 +69,7 @@ object HttpErrorHandlerSpec extends Specification {
     val env = Environment.simple(mode = mode)
     Fakes.injectorFromBindings(HttpErrorHandler.bindingsFromConfiguration(env, config)
       ++ Seq(
-        BindingKey(classOf[Router.Routes]).to(Router.Null),
+        BindingKey(classOf[Router]).to(Router.empty),
         BindingKey(classOf[OptionalSourceMapper]).to(new OptionalSourceMapper(None)),
         BindingKey(classOf[Configuration]).to(config),
         BindingKey(classOf[Environment]).to(env)
@@ -83,9 +85,9 @@ object HttpErrorHandlerSpec extends Specification {
 
   class CustomJavaErrorHandler extends play.http.HttpErrorHandler {
     def onClientError(req: play.mvc.Http.RequestHeader, status: Int, msg: String) =
-      play.libs.F.Promise.pure(play.mvc.Results.ok())
+      CompletableFuture.completedFuture(play.mvc.Results.ok())
     def onServerError(req: play.mvc.Http.RequestHeader, exception: Throwable) =
-      play.libs.F.Promise.pure(play.mvc.Results.ok())
+      CompletableFuture.completedFuture(play.mvc.Results.ok())
   }
 
 }

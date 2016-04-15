@@ -1,11 +1,14 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.filters.csrf
 
 import javax.inject.{ Provider, Inject }
+import akka.stream.Materializer
+import play.api.libs.Crypto
+import play.api.libs.crypto.CSRFTokenSigner
 import play.api.mvc._
-import play.filters.csrf.CSRF.{ Config, TokenProvider, ErrorHandler }
+import play.filters.csrf.CSRF._
 
 /**
  * A filter that provides CSRF protection.
@@ -14,35 +17,44 @@ import play.filters.csrf.CSRF.{ Config, TokenProvider, ErrorHandler }
  * happens before the application is started.  Since the default values for the parameters are loaded from config
  * and hence depend on a started application, they must be by name.
  *
- * @param conf A csrf configuration object
+ * @param config A csrf configuration object
  * @param tokenProvider A token provider to use.
  * @param errorHandler handling failed token error.
  */
 class CSRFFilter(
-    conf: => Config = CSRFConf.defaultConfig,
-    val tokenProvider: TokenProvider = CSRFConf.defaultTokenProvider,
-    val errorHandler: ErrorHandler = CSRF.DefaultErrorHandler) extends EssentialFilter {
-
-  def config: Config = conf
+    config: => CSRFConfig,
+    tokenSigner: => CSRFTokenSigner,
+    val tokenProvider: TokenProvider = new SignedTokenProvider(Crypto.crypto),
+    val errorHandler: ErrorHandler = CSRF.DefaultErrorHandler)(implicit mat: Materializer) extends EssentialFilter {
 
   @Inject
-  def this(configProvider: Provider[Config], tokenProvider: TokenProvider, errorHandler: ErrorHandler) = {
-    this(configProvider.get, tokenProvider, errorHandler)
+  def this(config: Provider[CSRFConfig], tokenSignerProvider: Provider[CSRFTokenSigner], tokenProvider: TokenProvider, errorHandler: ErrorHandler)(mat: Materializer) = {
+    this(config.get, tokenSignerProvider.get, tokenProvider, errorHandler)(mat)
+  }
+
+  // Java constructor for manually constructing the filter
+  def this(config: CSRFConfig, tokenSigner: play.libs.crypto.CSRFTokenSigner, tokenProvider: TokenProvider, errorHandler: CSRFErrorHandler)(mat: Materializer) = {
+    this(config, tokenSigner.asScala, tokenProvider, new JavaCSRFErrorHandlerAdapter(errorHandler))(mat)
   }
 
   /**
    * Default constructor, useful from Java
+   *
+   * @deprecated in 2.5.0. This constructor uses global state.
    */
-  def this() = this(Config(), CSRFConf.defaultTokenProvider, CSRFConf.defaultJavaErrorHandler)
+  @Deprecated
+  def this()(implicit mat: Materializer) = this(CSRFConfig.global, Crypto.crypto, new ConfigTokenProvider(CSRFConfig.global, Crypto.crypto), DefaultErrorHandler)
 
-  def apply(next: EssentialAction): EssentialAction = new CSRFAction(next, conf, tokenProvider, errorHandler)
+  def apply(next: EssentialAction): EssentialAction = new CSRFAction(next, config, tokenSigner, tokenProvider, errorHandler)
 }
 
 object CSRFFilter {
+  @deprecated("Use dependency injection", "2.5.0")
   def apply(
-    conf: => Config = CSRFConf.defaultConfig,
-    tokenProvider: TokenProvider = CSRFConf.defaultTokenProvider,
-    errorHandler: ErrorHandler = CSRF.DefaultErrorHandler): CSRFFilter = {
-    new CSRFFilter(conf, tokenProvider, errorHandler)
+    config: => CSRFConfig = CSRFConfig.global,
+    tokenSigner: => CSRFTokenSigner = Crypto.crypto,
+    tokenProvider: TokenProvider = new ConfigTokenProvider(CSRFConfig.global, Crypto.crypto),
+    errorHandler: ErrorHandler = DefaultErrorHandler)(implicit mat: Materializer): CSRFFilter = {
+    new CSRFFilter(config, tokenSigner, tokenProvider, errorHandler)
   }
 }

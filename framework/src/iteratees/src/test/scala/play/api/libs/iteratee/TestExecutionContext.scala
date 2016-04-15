@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs.iteratee
 
@@ -10,7 +10,7 @@ object TestExecutionContext {
   /**
    * Create a `TestExecutionContext` that delegates to the iteratee package's default `ExecutionContext`.
    */
-  def apply(): TestExecutionContext = new TestExecutionContext(Execution.defaultExecutionContext)
+  def apply(): TestExecutionContext = new TestExecutionContext(Execution.trampoline)
 
 }
 
@@ -35,7 +35,9 @@ class TestExecutionContext(delegate: ExecutionContext) extends ExecutionContext 
     throw new RuntimeException("Cannot execute unprepared TestExecutionContext")
   }
 
-  def reportFailure(t: Throwable): Unit = delegate.reportFailure(t)
+  def reportFailure(t: Throwable): Unit = {
+    println(t)
+  }
 
   override def prepare(): ExecutionContext = {
     val isLocal = Option(local.get()).getOrElse(false: java.lang.Boolean)
@@ -48,7 +50,9 @@ class TestExecutionContext(delegate: ExecutionContext) extends ExecutionContext 
         preparedDelegate.execute(runnable)
       }
 
-      def reportFailure(t: Throwable): Unit = preparedDelegate.reportFailure(t)
+      def reportFailure(t: Throwable): Unit = {
+        println(t)
+      }
 
     }
   }

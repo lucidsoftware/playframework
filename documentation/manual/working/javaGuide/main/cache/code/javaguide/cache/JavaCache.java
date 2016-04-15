@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package javaguide.cache;
 
@@ -25,7 +25,7 @@ public class JavaCache extends WithApplication {
 
     @Override
     protected Application provideApplication() {
-        return fakeApplication(ImmutableMap.of("play.modules.cache.bindCaches", Arrays.asList("session-cache")));
+        return fakeApplication(ImmutableMap.of("play.cache.bindCaches", Arrays.asList("session-cache")));
     }
 
     public class News {}
@@ -80,9 +80,9 @@ public class JavaCache extends WithApplication {
     public void http() {
         CacheApi cache = app.injector().instanceOf(CacheApi.class);
 
-        assertThat(contentAsString(MockJavaActionHelper.call(new Controller1(), fakeRequest())), equalTo("Hello world"));
+        assertThat(contentAsString(MockJavaActionHelper.call(new Controller1(), fakeRequest(), mat)), equalTo("Hello world"));
         assertThat(cache.get("homePage"), notNullValue());
         cache.set("homePage", Results.ok("something else"));
-        assertThat(contentAsString(MockJavaActionHelper.call(new Controller1(), fakeRequest())), equalTo("something else"));
+        assertThat(contentAsString(MockJavaActionHelper.call(new Controller1(), fakeRequest(), mat)), equalTo("something else"));
     }
 }

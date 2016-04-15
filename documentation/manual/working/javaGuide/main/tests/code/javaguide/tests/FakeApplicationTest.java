@@ -1,22 +1,27 @@
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
 package javaguide.tests;
 
+//#test-imports
+import play.test.*;
 import static play.test.Helpers.*;
-import static org.junit.Assert.*;
+//#test-imports
 
 import org.junit.Test;
+import static org.junit.Assert.*;
 
 import play.Application;
 import play.GlobalSettings;
-import play.test.FakeApplication;
 import play.test.Helpers;
 
 public class FakeApplicationTest {
 
-    static class Computer {
-        String name = "Macintosh";
-        String introduced = "1984-01-24";
+    public static class Computer {
+        public String name = "Macintosh";
+        public String introduced = "1984-01-24";
 
-        static Computer findById(long id) {
+        public static Computer findById(long id) {
             return new Computer();
         }
     }

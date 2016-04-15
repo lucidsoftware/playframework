@@ -1,18 +1,17 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.http
 
-import javax.inject.{ Provider, Inject }
+import javax.inject.{ Inject, Provider }
 
-import play.api.inject.{ BindingKey, Binding }
-import play.api.libs.iteratee.Done
-import play.api.{ Configuration, Environment, GlobalSettings }
 import play.api.http.Status._
+import play.api.inject.{ Binding, BindingKey }
+import play.api.libs.streams.Accumulator
 import play.api.mvc._
-import play.core.Router
-import play.core.actions.HeadAction
-import play.core.j.{ JavaHandler, JavaHandlerComponents }
+import play.api.routing.Router
+import play.api.{ Configuration, Environment, GlobalSettings, PlayConfig }
+import play.core.j.{ JavaHttpRequestHandlerDelegate, JavaHandler, JavaHandlerComponents }
 import play.utils.Reflect
 
 /**
@@ -35,30 +34,34 @@ trait HttpRequestHandler {
    * @return The possibly modified/tagged request, and a handler to handle it
    */
   def handlerForRequest(request: RequestHeader): (RequestHeader, Handler)
+
+  /**
+   * Adapt this to a Java HttpRequestHandler
+   */
+  def asJava = new JavaHttpRequestHandlerDelegate(this)
 }
 
 object HttpRequestHandler {
 
   def bindingsFromConfiguration(environment: Environment, configuration: Configuration): Seq[Binding[_]] = {
 
-    val javaComponentsBinding = BindingKey(classOf[play.core.j.JavaHandlerComponents]).toSelf
+    val fromConfiguration = Reflect.bindingsFromConfiguration[HttpRequestHandler, play.http.HttpRequestHandler, play.core.j.JavaHttpRequestHandlerAdapter, play.http.DefaultHttpRequestHandler, JavaCompatibleHttpRequestHandler](environment,
+      PlayConfig(configuration), "play.http.requestHandler", "RequestHandler")
 
-    Reflect.configuredClass[HttpRequestHandler, play.http.HttpRequestHandler, GlobalSettingsHttpRequestHandler](environment,
-      configuration, "play.http.requestHandler", "RequestHandler") match {
-        case None => Nil
-        case Some(Left(scalaImpl)) =>
-          Seq(
-            BindingKey(classOf[HttpRequestHandler]).to(scalaImpl),
-            // Need to bind the default Java one in case the Scala one depends on JavaHandlerComponents
-            BindingKey(classOf[play.http.HttpRequestHandler]).to[play.http.GlobalSettingsHttpRequestHandler],
-            javaComponentsBinding
-          )
-        case Some(Right(javaImpl)) =>
-          Seq(
-            BindingKey(classOf[HttpRequestHandler]).to[JavaCompatibleHttpRequestHandler],
-            BindingKey(classOf[play.http.HttpRequestHandler]).to(javaImpl),
-            javaComponentsBinding
-          )
+    val javaComponentsBindings = Seq(BindingKey(classOf[play.core.j.JavaHandlerComponents]).to[play.core.j.DefaultJavaHandlerComponents])
+
+    fromConfiguration ++ javaComponentsBindings
+  }
+}
+
+object ActionCreator {
+  import play.http.{ ActionCreator, HttpRequestHandlerActionCreator }
+
+  def bindingsFromConfiguration(environment: Environment, configuration: Configuration): Seq[Binding[_]] = {
+    Reflect.configuredClass[ActionCreator, ActionCreator, HttpRequestHandlerActionCreator](environment,
+      PlayConfig(configuration), "play.http.actionCreator", "ActionCreator").fold(Seq[Binding[_]]()) { either =>
+        val impl = either.fold(identity, identity)
+        Seq(BindingKey(classOf[ActionCreator]).to(impl))
       }
   }
 }
@@ -67,40 +70,49 @@ object HttpRequestHandler {
  * Implementation of a [HttpRequestHandler] that always returns NotImplemented results
  */
 object NotImplementedHttpRequestHandler extends HttpRequestHandler {
-  def handlerForRequest(request: RequestHeader) = request -> EssentialAction(_ => Done(Results.NotImplemented))
+  def handlerForRequest(request: RequestHeader) = request -> EssentialAction(_ => Accumulator.done(Results.NotImplemented))
 }
 
 /**
- * A default implementation of the [[HttpRequestHandler]].
+ * A base implementation of the [[HttpRequestHandler]] that handles Scala actions. If you use Java actions in your
+ * application, you should override [[JavaCompatibleHttpRequestHandler]]; otherwise you can override this for your
+ * custom handler.
  *
- * This can be conveniently overridden to plug in global interception or custom routing logic into Play's existing
- * request handling infrastructure.
- *
- * Technically, this is not the default request handler that Play uses, rather, the [[GlobalSettingsHttpRequestHandler]]
- * is the default one, in order to ensure that existing legacy implementations of global request interception still
- * work. In future, this will become the default request handler.
+ * Technically, this is not the default request handler that Play uses, rather, the [[JavaCompatibleHttpRequestHandler]]
+ * is the default one, in order to provide support for Java actions.
  *
  * The default implementations of method interception methods on [[play.api.GlobalSettings]] match the implementations
  * of this, so when not providing any custom logic, whether this is used or the global settings http request handler
  * is used is irrelevant.
  */
-class DefaultHttpRequestHandler(routes: Router.Routes, errorHandler: HttpErrorHandler, configuration: HttpConfiguration,
+class DefaultHttpRequestHandler(router: Router, errorHandler: HttpErrorHandler, configuration: HttpConfiguration,
     filters: EssentialFilter*) extends HttpRequestHandler {
 
   @Inject
-  def this(routes: Router.Routes, errorHandler: HttpErrorHandler, configuration: HttpConfiguration, filters: HttpFilters) =
-    this(routes, errorHandler, configuration, filters.filters: _*)
+  def this(router: Router, errorHandler: HttpErrorHandler, configuration: HttpConfiguration, filters: HttpFilters) =
+    this(router, errorHandler, configuration, filters.filters: _*)
 
-  private val context = if (configuration.context.endsWith("/")) {
-    configuration.context
-  } else {
-    configuration.context + "/"
+  private val context = configuration.context.stripSuffix("/")
+
+  private def inContext(path: String): Boolean = {
+    // Assume context is a string without a trailing '/'.
+    // Handle four cases:
+    // * context.isEmpty
+    //   - There is no context, everything is in context, short circuit all other checks
+    // * !path.startsWith(context)
+    //   - Either path is shorter than context or starts with a different prefix.
+    // * path.startsWith(context) && path.length == context.length
+    //   - Path is equal to context.
+    // * path.startsWith(context) && path.charAt(context.length) == '/')
+    //   - Path starts with context followed by a '/' character.
+    context.isEmpty ||
+      (path.startsWith(context) && (path.length == context.length || path.charAt(context.length) == '/'))
   }
 
   def handlerForRequest(request: RequestHeader) = {
 
     def notFoundHandler = Action.async(BodyParsers.parse.empty)(req =>
-      errorHandler.onClientError(request, NOT_FOUND)
+      errorHandler.onClientError(req, NOT_FOUND)
     )
 
     val (routedRequest, handler) = routeRequest(request) map {
@@ -110,17 +122,18 @@ class DefaultHttpRequestHandler(routes: Router.Routes, errorHandler: HttpErrorHa
 
       // We automatically permit HEAD requests against any GETs without the need to
       // add an explicit mapping in Routes
-      val missingHandler: Handler = request.method match {
+      request.method match {
         case HttpVerbs.HEAD =>
-          val headAction = routeRequest(request.copy(method = HttpVerbs.GET)) match {
-            case Some(action: EssentialAction) => action
-            case None => notFoundHandler
+          routeRequest(request.copy(method = HttpVerbs.GET)) match {
+            case Some(action: EssentialAction) => action match {
+              case handler: RequestTaggingHandler => (handler.tagRequest(request), action)
+              case _ => (request, action)
+            }
+            case None => (request, notFoundHandler)
           }
-          new HeadAction(headAction)
         case _ =>
-          notFoundHandler
+          (request, notFoundHandler)
       }
-      (request, missingHandler)
     }
 
     (routedRequest, filterHandler(rh => handler)(routedRequest))
@@ -132,7 +145,7 @@ class DefaultHttpRequestHandler(routes: Router.Routes, errorHandler: HttpErrorHa
   protected def filterHandler(next: RequestHeader => Handler): (RequestHeader => Handler) = {
     (request: RequestHeader) =>
       next(request) match {
-        case action: EssentialAction if request.path startsWith context => filterAction(action)
+        case action: EssentialAction if inContext(request.path) => filterAction(action)
         case handler => handler
       }
   }
@@ -156,7 +169,7 @@ class DefaultHttpRequestHandler(routes: Router.Routes, errorHandler: HttpErrorHa
    * @return A handler to handle the request, if one can be found
    */
   def routeRequest(request: RequestHeader): Option[Handler] = {
-    routes.handlerFor(request)
+    router.handlerFor(request)
   }
 
 }
@@ -164,10 +177,11 @@ class DefaultHttpRequestHandler(routes: Router.Routes, errorHandler: HttpErrorHa
 /**
  * An [[HttpRequestHandler]] that delegates to [[play.api.GlobalSettings]].
  *
- * This is the default request handler used by Play, in order to support legacy global settings request interception.
+ * This handler should be used in order to support legacy global settings request interception.
  *
  * Custom handlers need not extend this.
  */
+@deprecated("GlobalSettings is deprecated. Use DefaultHttpRequestHandler or JavaCompatibleHttpRequestHandler.", "2.5.0")
 class GlobalSettingsHttpRequestHandler @Inject() (global: Provider[GlobalSettings]) extends HttpRequestHandler {
   def handlerForRequest(request: RequestHeader) = global.get.onRequestReceived(request)
 }
@@ -182,8 +196,8 @@ class GlobalSettingsHttpRequestHandler @Inject() (global: Provider[GlobalSetting
  * If your application routes to Java actions, then you must use this request handler as the base class as is or as
  * the base class for your custom [[HttpRequestHandler]].
  */
-class JavaCompatibleHttpRequestHandler @Inject() (routes: Router.Routes, errorHandler: HttpErrorHandler,
-  configuration: HttpConfiguration, filters: HttpFilters, components: JavaHandlerComponents) extends DefaultHttpRequestHandler(routes,
+class JavaCompatibleHttpRequestHandler @Inject() (router: Router, errorHandler: HttpErrorHandler,
+  configuration: HttpConfiguration, filters: HttpFilters, components: JavaHandlerComponents) extends DefaultHttpRequestHandler(router,
   errorHandler, configuration, filters.filters: _*) {
 
   override def routeRequest(request: RequestHeader): Option[Handler] = {

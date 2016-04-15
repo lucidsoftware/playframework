@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.data.format
 
@@ -63,9 +63,20 @@ object Formats {
   }
 
   /**
+   * Default formatter for the `Char` type.
+   */
+  implicit def charFormat: Formatter[Char] = new Formatter[Char] {
+    def bind(key: String, data: Map[String, String]) =
+      data.get(key).filter(s => s.length == 1 && s != " ").map(s => Right(s.charAt(0))).getOrElse(
+        Left(Seq(FormError(key, "error.required", Nil)))
+      )
+    def unbind(key: String, value: Char) = Map(key -> value.toString)
+  }
+
+  /**
    * Helper for formatters binders
    * @param parse Function parsing a String value into a T value, throwing an exception in case of failure
-   * @param error Error to set in case of parsing failure
+   * @param errArgs Error to set in case of parsing failure
    * @param key Key name of the field to parse
    * @param data Field data
    */
@@ -242,8 +253,6 @@ object Formats {
 
   /**
    * Default formatter for `org.joda.time.DateTime` type with pattern `yyyy-MM-dd`.
-   *
-   * @param pattern a date pattern as specified in `org.joda.time.format.DateTimeFormat`.
    */
   implicit val jodaDateTimeFormat: Formatter[org.joda.time.DateTime] = jodaDateTimeFormat("yyyy-MM-dd")
 

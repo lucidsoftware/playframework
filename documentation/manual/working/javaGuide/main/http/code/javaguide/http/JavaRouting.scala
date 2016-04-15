@@ -1,19 +1,18 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package javaguide.http
 
+import play.api.Application
+import akka.stream.ActorMaterializer
 import org.specs2.mutable.Specification
-import play.api.mvc.{Result, Handler, EssentialAction, RequestHeader}
-import play.core.Router
+import play.api.mvc.{EssentialAction, RequestHeader}
+import play.api.routing.Router
 import javaguide.http.routing._
 import play.api.test.Helpers._
-import play.api.test.{FakeRequest, FakeApplication}
+import play.api.test.FakeRequest
 import javaguide.testhelpers.MockJavaAction
-import play.core.j.{JavaHandlerComponents, JavaHandler}
 import play.libs.F
-
-import scala.concurrent.Future
 
 object JavaRouting extends Specification {
 
@@ -52,7 +51,8 @@ object JavaRouting extends Specification {
       contentOf(FakeRequest("GET", "/api/list-all?version=3.0")) must_== "version 3.0"
     }
     "support reverse routing" in {
-      running(FakeApplication()) {
+      running() { app =>
+        implicit val mat = ActorMaterializer()(app.actorSystem)
         header("Location", call(new MockJavaAction {
           override def invocation = F.Promise.pure(new javaguide.http.routing.controllers.Application().index())
         }, FakeRequest())) must beSome("/hello/Bob")
@@ -61,11 +61,11 @@ object JavaRouting extends Specification {
 
   }
 
-  def contentOf(rh: RequestHeader, router: Class[_ <: Router.Routes] = classOf[Routes]) = {
-    val app = FakeApplication(additionalConfiguration = Map("application.router" -> router.getName))
-    running(app) {
+  def contentOf(rh: RequestHeader, router: Class[_ <: Router] = classOf[Routes]) = {
+    running(_.configure("play.http.router" -> router.getName)) { app =>
+      implicit val mat = ActorMaterializer()(app.actorSystem)
       contentAsString(app.requestHandler.handlerForRequest(rh)._2 match {
-        case e: EssentialAction => e(rh).run
+        case e: EssentialAction => e(rh).run()
       })
     }
   }

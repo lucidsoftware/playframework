@@ -1,17 +1,18 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package com.typesafe.play.docs.sbtplugin
 
-import java.io.{ Closeable, BufferedReader, InputStreamReader, InputStream }
+import java.io.{ BufferedReader, InputStreamReader, InputStream }
 import java.net.HttpURLConnection
 import java.util.concurrent.Executors
 import java.util.jar.JarFile
+import com.typesafe.play.docs.sbtplugin.Imports._
 import org.pegdown.ast._
 import org.pegdown.ast.Node
 import org.pegdown.plugins.{ ToHtmlSerializerPlugin, PegDownPlugins }
 import org.pegdown._
-import play.sbtplugin.Colors
+import play.sbt.Colors
 import play.doc._
 import sbt.{ FileRepository => _, _ }
 import sbt.Keys._
@@ -68,6 +69,14 @@ object PlayDocsValidation {
     missingCodeSamples: Seq[CodeSample],
     introducedCodeSamples: Seq[CodeSample],
     totalCodeSamples: Int)
+
+  /**
+   * Configuration for validation.
+   *
+   * @param downstreamWikiPages Wiki pages from downstream projects - so that the documentation can link to them.
+   * @param downstreamApiPaths The downstream API paths
+   */
+  case class ValidationConfig(downstreamWikiPages: Set[String] = Set.empty[String], downstreamApiPaths: Seq[String] = Nil)
 
   val generateMarkdownRefReportTask = Def.task {
 
@@ -304,21 +313,17 @@ object PlayDocsValidation {
     val report = generateMarkdownRefReport.value
     val log = streams.value.log
     val base = manualPath.value
+    val validationConfig = playDocsValidationConfig.value
 
-    val docsJarRepo: play.doc.FileRepository with Closeable = if (fallbackToJar.value && docsJarFile.value.isDefined) {
-      val jar = new JarFile(docsJarFile.value.get)
-      new JarRepository(jar, Some("play/docs/content")) with Closeable
-    } else {
-      new play.doc.FileRepository with Closeable {
-        def loadFile[A](path: String)(loader: (InputStream) => A) = None
-        def handleFile[A](path: String)(handler: (FileHandle) => A) = None
-        def findFileWithName(name: String) = None
-        def close(): Unit = ()
-      }
+    val allResources = PlayDocsKeys.resources.value
+    val repos = allResources.map {
+      case PlayDocsDirectoryResource(directory) => new FilesystemRepository(directory)
+      case PlayDocsJarFileResource(jarFile, base) => new JarRepository(new JarFile(jarFile), base)
     }
 
+    val combinedRepo = new AggregateFileRepository(repos)
+
     val fileRepo = new FilesystemRepository(base / "manual")
-    val combinedRepo = new AggregateFileRepository(Seq(docsJarRepo, fileRepo))
 
     val pageIndex = PageIndex.parseFrom(combinedRepo, "", None)
 
@@ -337,7 +342,7 @@ object PlayDocsValidation {
     }
 
     def fileExists(path: String): Boolean = {
-      new File(base, path).isFile || docsJarRepo.loadFile(path)(_ => ()).nonEmpty
+      combinedRepo.loadFile(path)(_ => ()).nonEmpty
     }
 
     def assertLinksNotMissing(desc: String, links: Seq[LinkRef], errorMessage: String): Unit = {
@@ -360,13 +365,19 @@ object PlayDocsValidation {
     }
 
     assertLinksNotMissing("Missing wiki links test", report.wikiLinks.filterNot { link =>
-      pages.contains(link.link) || docsJarRepo.findFileWithName(link.link + ".md").nonEmpty
+      pages.contains(link.link) || validationConfig.downstreamWikiPages(link.link) || combinedRepo.findFileWithName(link.link + ".md").nonEmpty
     }, "Could not find link")
 
     def relativeLinkOk(link: LinkRef) = {
       link match {
-        case scalaApi if scalaApi.link.startsWith("api/scala/index.html#") => true
-        case javaApi if javaApi.link.startsWith("api/java/") => true
+        case badScalaApi if badScalaApi.link.startsWith("api/scala/index.html#") =>
+          println("Don't use segment links from the index.html page to scaladocs, use path links, ie:")
+          println("  api/scala/index.html#play.api.Application@requestHandler")
+          println("should become:")
+          println("  api/scala/play/api/Application.html#requestHandler")
+          false
+        case scalaApi if scalaApi.link.startsWith("api/scala/") => fileExists(scalaApi.link.split('#').head)
+        case javaApi if javaApi.link.startsWith("api/java/") => fileExists(javaApi.link.split('#').head)
         case resource if resource.link.startsWith("resources/") =>
           fileExists(resource.link.stripPrefix("resources/"))
         case bad => false
@@ -389,18 +400,15 @@ object PlayDocsValidation {
       "Could not find source file")
 
     def segmentExists(sample: CodeSampleRef) = {
-      // Find the code segment
-      val sourceCode = {
-        val file = new File(base, sample.source)
-        if (file.exists()) {
-          IO.readLines(new File(base, sample.source))
-        } else {
-          docsJarRepo.loadFile(sample.source)(is => IO.readLines(new BufferedReader(new InputStreamReader(is)))).get
-        }
+      if (sample.segment.nonEmpty) {
+        // Find the code segment
+        val sourceCode = combinedRepo.loadFile(sample.source)(is => IO.readLines(new BufferedReader(new InputStreamReader(is)))).get
+        val notLabel = (s: String) => !s.contains("#" + sample.segment)
+        val segment = sourceCode dropWhile (notLabel) drop (1) takeWhile (notLabel)
+        !segment.isEmpty
+      } else {
+        true
       }
-      val notLabel = (s: String) => !s.contains("#" + sample.segment)
-      val segment = sourceCode dropWhile (notLabel) drop (1) takeWhile (notLabel)
-      !segment.isEmpty
     }
 
     assertLinksNotMissing("Missing source segments test", existing.collect {
@@ -408,18 +416,6 @@ object PlayDocsValidation {
     }, "Could not find source segment")
 
     val allLinks = report.wikiLinks.map(_.link).toSet
-
-    if (!fallbackToJar.value && pageIndex.isEmpty) {
-      // A bit hard to do this without parsing all files, so only do it if we're not falling back to the jar file
-      val orphanPages = pages.filterNot(page => allLinks.contains(page._1)).filterNot { page =>
-        page._1.startsWith("_") || page._1 == "Home" || page._1.startsWith("Book")
-      }
-      doAssertion("Orphan pages test", orphanPages.toSeq) {
-        orphanPages.foreach { page =>
-          log.error("Page " + page._2 + " is not referenced by any links")
-        }
-      }
-    }
 
     pageIndex.foreach { idx =>
       // Make sure all pages are in the page index
@@ -431,7 +427,10 @@ object PlayDocsValidation {
       }
     }
 
-    docsJarRepo.close()
+    repos.foreach {
+      case jarRepo: JarRepository => jarRepo.close()
+      case _ => ()
+    }
 
     if (failed) {
       throw new RuntimeException("Documentation validation failed")
@@ -442,7 +441,10 @@ object PlayDocsValidation {
     val log = streams.value.log
     val report = generateMarkdownRefReport.value
 
-    val grouped = report.externalLinks.groupBy(_.link).filterNot(_._1.startsWith("http://localhost:9000")).toSeq.sortBy(_._1)
+    val grouped = report.externalLinks
+      .groupBy { _.link }
+      .filterNot { e => e._1.startsWith("http://localhost:") || e._1.contains("example.com") || e._1.startsWith("http://127.0.0.1") }
+      .toSeq.sortBy { _._1 }
 
     implicit val ec = ExecutionContext.fromExecutorService(Executors.newFixedThreadPool(50))
 
@@ -451,6 +453,7 @@ object PlayDocsValidation {
         val (url, refs) = entry
         val connection = new URL(url).openConnection().asInstanceOf[HttpURLConnection]
         try {
+          connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.10; rv:37.0) Gecko/20100101 Firefox/37.0")
           connection.connect()
           connection.getResponseCode match {
             // A few people use GitHub.com repositories, which will return 403 errors for directory listings

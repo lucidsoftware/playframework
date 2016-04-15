@@ -1,102 +1,54 @@
 /*
  *
- *  * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ *  * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  *
  */
 package play.api.libs.ws.ning
 
 import java.security.KeyStore
 import java.security.cert.CertPathValidatorException
-import javax.inject.{ Singleton, Inject, Provider }
-
-import org.slf4j.LoggerFactory
-
-import com.ning.http.client.{ AsyncHttpClientConfig, SSLEngineFactory }
-
 import javax.net.ssl._
-import play.api.{ Environment, Configuration }
+
+import org.asynchttpclient.netty.ssl.JsseSslEngineFactory
+import org.asynchttpclient.{ AsyncHttpClientConfig, DefaultAsyncHttpClientConfig }
+import org.slf4j.LoggerFactory
+import play.api.libs.ws.WSClientConfig
 import play.api.libs.ws.ssl._
-import play.api.libs.ws.{ DefaultWSClientConfig, WSClientConfig }
+
+import scala.concurrent.duration._
 
 /**
- * A NingWSClientConfig trait.  This provides bindings that can be passed into the ning implementation of WSClient.
+ * Ning client config.
+ *
+ * @param wsClientConfig The general WS client config.
+ * @param maxConnectionsPerHost The maximum number of connections to make per host. -1 means no maximum.
+ * @param maxConnectionsTotal The maximum total number of connections. -1 means no maximum.
+ * @param maxConnectionLifetime The maximum time that a connection should live for in the pool.
+ * @param idleConnectionInPoolTimeout The time after which a connection that has been idle in the pool should be closed.
+ * @param maxNumberOfRedirects The maximum number of redirects.
+ * @param maxRequestRetry The maximum number of times to retry a request if it fails.
+ * @param disableUrlEncoding Whether the raw URL should be used.
+ * @param keepAlive whether connection pooling should be used.
  */
-trait NingWSClientConfig {
-
-  def wsClientConfig: WSClientConfig
-
-  def allowPoolingConnection: Option[Boolean]
-
-  def allowSslConnectionPool: Option[Boolean]
-
-  def ioThreadMultiplier: Option[Int]
-
-  def maximumConnectionsPerHost: Option[Int]
-
-  def maximumConnectionsTotal: Option[Int]
-
-  def maximumNumberOfRedirects: Option[Int]
-
-  def maxRequestRetry: Option[Int]
-
-  def removeQueryParamsOnRedirect: Option[Boolean]
-
-  def requestCompressionLevel: Option[Int]
-
-  def useRawUrl: Option[Boolean]
-
-}
+@deprecated("Use AhcWSClientConfig", "2.5")
+case class NingWSClientConfig(wsClientConfig: WSClientConfig = WSClientConfig(),
+  maxConnectionsPerHost: Int = -1,
+  maxConnectionsTotal: Int = -1,
+  maxConnectionLifetime: Duration = Duration.Inf,
+  idleConnectionInPoolTimeout: Duration = 1.minute,
+  maxNumberOfRedirects: Int = 5,
+  maxRequestRetry: Int = 5,
+  disableUrlEncoding: Boolean = false,
+  keepAlive: Boolean = true)
 
 /**
- * Default ning client config
+ * Factory for creating NingWSClientConfig, for use from Java.
  */
-case class DefaultNingWSClientConfig(wsClientConfig: WSClientConfig = DefaultWSClientConfig(),
-  allowPoolingConnection: Option[Boolean] = None,
-  allowSslConnectionPool: Option[Boolean] = None,
-  ioThreadMultiplier: Option[Int] = None,
-  maximumConnectionsPerHost: Option[Int] = None,
-  maximumConnectionsTotal: Option[Int] = None,
-  maximumNumberOfRedirects: Option[Int] = None,
-  maxRequestRetry: Option[Int] = None,
-  removeQueryParamsOnRedirect: Option[Boolean] = None,
-  requestCompressionLevel: Option[Int] = None,
-  useRawUrl: Option[Boolean] = None) extends NingWSClientConfig
+@deprecated("Use AhcWSConfigBuilder", "2.5")
+object NingWSClientConfigFactory {
 
-/**
- * This class creates a DefaultWSClientConfig object from the play.api.Configuration.
- */
-@Singleton
-class DefaultNingWSClientConfigParser @Inject() (wsClientConfig: WSClientConfig,
-    configuration: Configuration,
-    environment: Environment) extends Provider[NingWSClientConfig] {
-
-  def get = parse()
-
-  def parse(): NingWSClientConfig = {
-    val allowPoolingConnection = configuration.getBoolean("ws.ning.allowPoolingConnection")
-    val allowSslConnectionPool = configuration.getBoolean("ws.ning.allowSslConnectionPool")
-    val ioThreadMultiplier = configuration.getInt("ws.ning.ioThreadMultiplier")
-    val maximumConnectionsPerHost = configuration.getInt("ws.ning.maximumConnectionsPerHost")
-    val maximumConnectionsTotal = configuration.getInt("ws.ning.maximumConnectionsTotal")
-    val maximumNumberOfRedirects = configuration.getInt("ws.ning.maximumNumberOfRedirects")
-    val maxRequestRetry = configuration.getInt("ws.ning.maxRequestRetry")
-    val removeQueryParamsOnRedirect = configuration.getBoolean("ws.ning.removeQueryParamsOnRedirect")
-    val requestCompressionLevel = configuration.getInt("ws.ning.requestCompressionLevel")
-    val useRawUrl = configuration.getBoolean("ws.ning.useRawUrl")
-
-    DefaultNingWSClientConfig(
-      wsClientConfig,
-      allowPoolingConnection,
-      allowSslConnectionPool,
-      ioThreadMultiplier,
-      maximumConnectionsPerHost,
-      maximumConnectionsTotal,
-      maximumNumberOfRedirects,
-      maxRequestRetry,
-      removeQueryParamsOnRedirect,
-      requestCompressionLevel,
-      useRawUrl
-    )
+  def forClientConfig(config: WSClientConfig) = {
+    NingWSClientConfig(wsClientConfig = config)
   }
 }
 
@@ -105,21 +57,15 @@ class DefaultNingWSClientConfigParser @Inject() (wsClientConfig: WSClientConfig,
  *
  * @param ningConfig the ning client configuration.
  */
-class NingAsyncHttpClientConfigBuilder(ningConfig: NingWSClientConfig = DefaultNingWSClientConfig()) {
+@deprecated("Use AhcConfigBuilder", "2.5")
+class NingAsyncHttpClientConfigBuilder(ningConfig: NingWSClientConfig = NingWSClientConfig()) {
+
+  protected val addCustomSettings: DefaultAsyncHttpClientConfig.Builder => DefaultAsyncHttpClientConfig.Builder = identity
 
   /**
-   * Constructor for backwards compatibility with <= 2.3.X
+   * The underlying `DefaultAsyncHttpClientConfig.Builder` used by this instance.
    */
-  @deprecated("Use NingAsyncHttpClientConfigBuilder(NingWSClientConfig)", "2.4")
-  def this(config: WSClientConfig) =
-    this(DefaultNingWSClientConfig(wsClientConfig = config))
-
-  protected val addCustomSettings: AsyncHttpClientConfig.Builder => AsyncHttpClientConfig.Builder = identity
-
-  /**
-   * The underlying `AsyncHttpClientConfig.Builder` used by this instance.
-   */
-  val builder: AsyncHttpClientConfig.Builder = new AsyncHttpClientConfig.Builder()
+  val builder: DefaultAsyncHttpClientConfig.Builder = new DefaultAsyncHttpClientConfig.Builder()
 
   private[ning] val logger = LoggerFactory.getLogger(this.getClass)
 
@@ -128,18 +74,13 @@ class NingAsyncHttpClientConfigBuilder(ningConfig: NingWSClientConfig = DefaultN
    *
    * @return the resulting builder
    */
-  def configure(): AsyncHttpClientConfig.Builder = {
+  def configure(): DefaultAsyncHttpClientConfig.Builder = {
     val config = ningConfig.wsClientConfig
 
     configureWS(ningConfig)
 
-    config.acceptAnyCertificate match {
-      case Some(true) =>
-      // lean on the AsyncHttpClient bug
+    configureSSL(config.ssl)
 
-      case _ =>
-        configureSSL(config.ssl.getOrElse(DefaultSSLConfig()))
-    }
     addCustomSettings(builder)
   }
 
@@ -153,12 +94,13 @@ class NingAsyncHttpClientConfigBuilder(ningConfig: NingWSClientConfig = DefaultN
   }
 
   /**
-   * Modify the underlying `AsyncHttpClientConfig.Builder` using the provided function, after defaults are set.
+   * Modify the underlying `DefaultAsyncHttpClientConfig.Builder` using the provided function, after defaults are set.
+   *
    * @param modify function with custom settings to apply to this builder before the client is built
    * @return the new builder
    */
   def modifyUnderlying(
-    modify: AsyncHttpClientConfig.Builder => AsyncHttpClientConfig.Builder): NingAsyncHttpClientConfigBuilder = {
+    modify: DefaultAsyncHttpClientConfig.Builder => DefaultAsyncHttpClientConfig.Builder): NingAsyncHttpClientConfigBuilder = {
     new NingAsyncHttpClientConfigBuilder(ningConfig) {
       override val addCustomSettings = modify compose NingAsyncHttpClientConfigBuilder.this.addCustomSettings
       override val builder = NingAsyncHttpClientConfigBuilder.this.builder
@@ -169,36 +111,43 @@ class NingAsyncHttpClientConfigBuilder(ningConfig: NingWSClientConfig = DefaultN
    * Configures the global settings.
    */
   def configureWS(ningConfig: NingWSClientConfig): Unit = {
-    import play.api.libs.ws.Defaults._
     val config = ningConfig.wsClientConfig
 
-    builder.setConnectionTimeoutInMs(config.connectionTimeout.getOrElse(connectionTimeout).toInt)
-      .setIdleConnectionTimeoutInMs(config.idleTimeout.getOrElse(idleTimeout).toInt)
-      .setRequestTimeoutInMs(config.requestTimeout.getOrElse(requestTimeout).toInt)
-      .setFollowRedirects(config.followRedirects.getOrElse(followRedirects))
-      .setUseProxyProperties(config.useProxyProperties.getOrElse(useProxyProperties))
-      .setCompressionEnabled(config.compressionEnabled.getOrElse(compressionEnabled))
+    def toMillis(duration: Duration): Int = {
+      if (duration.isFinite()) duration.toMillis.toInt
+      else -1
+    }
+
+    builder.setConnectTimeout(toMillis(config.connectionTimeout))
+      .setReadTimeout(toMillis(config.idleTimeout))
+      .setRequestTimeout(toMillis(config.requestTimeout))
+      .setFollowRedirect(config.followRedirects)
+      .setUseProxyProperties(config.useProxyProperties)
+      .setCompressionEnforced(config.compressionEnabled)
 
     config.userAgent foreach builder.setUserAgent
 
-    ningConfig.allowPoolingConnection.foreach(builder.setAllowPoolingConnection)
-    ningConfig.allowSslConnectionPool.foreach(builder.setAllowSslConnectionPool)
-    ningConfig.ioThreadMultiplier.foreach(builder.setIOThreadMultiplier)
-    ningConfig.maximumConnectionsPerHost.foreach(builder.setMaximumConnectionsPerHost)
-    ningConfig.maximumConnectionsTotal.foreach(builder.setMaximumConnectionsTotal)
-    ningConfig.maximumNumberOfRedirects.foreach(builder.setMaximumNumberOfRedirects)
-    ningConfig.maxRequestRetry.foreach(builder.setMaxRequestRetry)
-    ningConfig.removeQueryParamsOnRedirect.foreach(builder.setRemoveQueryParamsOnRedirect)
-    ningConfig.requestCompressionLevel.foreach(builder.setRequestCompressionLevel)
-    ningConfig.useRawUrl.foreach(builder.setUseRawUrl)
-  }
+    // setAllowPoolingConnections and setAllowPoolingSslConnections were merged into isKeepAlive
+    val keepAlive = ningConfig.keepAlive
+    builder.setKeepAlive(keepAlive)
 
-  /**
-   * Configures the global settings.
-   * For backwards compatibility with <= 2.3.X
-   */
-  @deprecated("Use configureWS(NingWSClientConfig)", "2.4")
-  def configureWS(config: WSClientConfig): Unit = configureWS(DefaultNingWSClientConfig(wsClientConfig = config))
+    builder.setMaxConnectionsPerHost(ningConfig.maxConnectionsPerHost)
+    builder.setMaxConnections(ningConfig.maxConnectionsTotal)
+    builder.setConnectionTtl(toMillis(ningConfig.maxConnectionLifetime))
+    builder.setPooledConnectionIdleTimeout(toMillis(ningConfig.idleConnectionInPoolTimeout))
+    builder.setMaxRedirects(ningConfig.maxNumberOfRedirects)
+    builder.setMaxRequestRetry(ningConfig.maxRequestRetry)
+    builder.setDisableUrlEncodingForBoundRequests(ningConfig.disableUrlEncoding)
+    // forcing shutdown of the AHC event loop because otherwise the test suite fails with a 
+    // OutOfMemoryException: cannot create new native thread. This is because when executing 
+    // tests in parallel there can be many threads pool that are left around because AHC is 
+    // shutting them down gracefully.
+    // The proper solution is to make these parameters configurable, so that they can be set 
+    // to 0 when running tests, and keep sensible defaults otherwise. AHC defaults are 
+    // shutdownQuiet=2000 (milliseconds) and shutdownTimeout=15000 (milliseconds).
+    builder.setShutdownQuietPeriod(0)
+    builder.setShutdownTimeout(0)
+  }
 
   def configureProtocols(existingProtocols: Array[String], sslConfig: SSLConfig): Array[String] = {
     val definedProtocols = sslConfig.enabledProtocols match {
@@ -212,8 +161,7 @@ class NingAsyncHttpClientConfigBuilder(ningConfig: NingWSClientConfig = DefaultN
         Protocols.recommendedProtocols.filter(existingProtocols.contains).toArray
     }
 
-    val allowWeakProtocols = sslConfig.loose.exists(loose => loose.allowWeakProtocols.getOrElse(false))
-    if (!allowWeakProtocols) {
+    if (!sslConfig.loose.allowWeakProtocols) {
       val deprecatedProtocols = Protocols.deprecatedProtocols
       for (deprecatedProtocol <- deprecatedProtocols) {
         if (definedProtocols.contains(deprecatedProtocol)) {
@@ -234,8 +182,7 @@ class NingAsyncHttpClientConfigBuilder(ningConfig: NingWSClientConfig = DefaultN
         Ciphers.recommendedCiphers.filter(existingCiphers.contains(_)).toArray
     }
 
-    val allowWeakCiphers = sslConfig.loose.exists(loose => loose.allowWeakCiphers.getOrElse(false))
-    if (!allowWeakCiphers) {
+    if (!sslConfig.loose.allowWeakCiphers) {
       val deprecatedCiphers = Ciphers.deprecatedCiphers
       for (deprecatedCipher <- deprecatedCiphers) {
         if (definedCiphers.contains(deprecatedCipher)) {
@@ -252,8 +199,7 @@ class NingAsyncHttpClientConfigBuilder(ningConfig: NingWSClientConfig = DefaultN
   def configureSSL(sslConfig: SSLConfig) {
 
     // context!
-    val useDefault = sslConfig.default.getOrElse(false)
-    val sslContext = if (useDefault) {
+    val sslContext = if (sslConfig.default) {
       logger.info("buildSSLContext: ws.ssl.default is true, using default SSLContext")
       validateDefaultTrustManager(sslConfig)
       SSLContext.getDefault
@@ -269,49 +215,25 @@ class NingAsyncHttpClientConfigBuilder(ningConfig: NingWSClientConfig = DefaultN
     val defaultProtocols = defaultParams.getProtocols
     val protocols = configureProtocols(defaultProtocols, sslConfig)
     defaultParams.setProtocols(protocols)
+    builder.setEnabledProtocols(protocols)
 
     // ciphers!
     val defaultCiphers = defaultParams.getCipherSuites
     val cipherSuites = configureCipherSuites(defaultCiphers, sslConfig)
     defaultParams.setCipherSuites(cipherSuites)
+    builder.setEnabledCipherSuites(cipherSuites)
 
-    val sslEngineFactory = new DefaultSSLEngineFactory(sslConfig, sslContext, enabledProtocols = protocols, enabledCipherSuites = cipherSuites)
+    builder.setAcceptAnyCertificate(sslConfig.loose.acceptAnyCertificate)
 
-    // Hostname Processing
-    val disableHostnameVerification = sslConfig.loose.flatMap(_.disableHostnameVerification).getOrElse(false)
-    if (!disableHostnameVerification) {
-      val hostnameVerifier = buildHostnameVerifier(sslConfig)
-      builder.setHostnameVerifier(hostnameVerifier)
-    } else {
-      logger.warn("buildHostnameVerifier: disabling hostname verification")
-    }
-
-    builder.setSSLContext(sslContext)
-
-    // Must set SSL engine factory AFTER the ssl context...
-    builder.setSSLEngineFactory(sslEngineFactory)
+    builder.setSslEngineFactory(new JsseSslEngineFactory(sslContext))
   }
 
   def buildKeyManagerFactory(ssl: SSLConfig): KeyManagerFactoryWrapper = {
-    val keyManagerAlgorithm = ssl.keyManagerConfig.flatMap(_.algorithm).getOrElse(KeyManagerFactory.getDefaultAlgorithm)
-    new DefaultKeyManagerFactoryWrapper(keyManagerAlgorithm)
+    new DefaultKeyManagerFactoryWrapper(ssl.keyManagerConfig.algorithm)
   }
 
   def buildTrustManagerFactory(ssl: SSLConfig): TrustManagerFactoryWrapper = {
-    val trustManagerAlgorithm = ssl.trustManagerConfig.flatMap(_.algorithm).getOrElse(TrustManagerFactory.getDefaultAlgorithm)
-    new DefaultTrustManagerFactoryWrapper(trustManagerAlgorithm)
-  }
-
-  def buildHostnameVerifier(sslConfig: SSLConfig): HostnameVerifier = {
-    val hostnameVerifierClass = sslConfig.hostnameVerifierClass.getOrElse(classOf[DefaultHostnameVerifier])
-    logger.debug("buildHostnameVerifier: enabling hostname verification using {}", hostnameVerifierClass)
-
-    try {
-      hostnameVerifierClass.newInstance()
-    } catch {
-      case e: Exception =>
-        throw new IllegalStateException("Cannot configure hostname verifier", e)
-    }
+    new DefaultTrustManagerFactoryWrapper(ssl.trustManagerConfig.algorithm)
   }
 
   def validateDefaultTrustManager(sslConfig: SSLConfig) {
@@ -331,8 +253,7 @@ class NingAsyncHttpClientConfigBuilder(ningConfig: NingWSClientConfig = DefaultN
     tmf.init(null.asInstanceOf[KeyStore])
     val trustManager: X509TrustManager = tmf.getTrustManagers()(0).asInstanceOf[X509TrustManager]
 
-    val disabledKeyAlgorithms = sslConfig.disabledKeyAlgorithms.getOrElse(Algorithms.disabledKeyAlgorithms)
-    val constraints = AlgorithmConstraintsParser.parseAll(AlgorithmConstraintsParser.line, disabledKeyAlgorithms).get.toSet
+    val constraints = sslConfig.disabledKeyAlgorithms.map(a => AlgorithmConstraintsParser.parseAll(AlgorithmConstraintsParser.expression, a).get).toSet
     val algorithmChecker = new AlgorithmChecker(keyConstraints = constraints, signatureConstraints = Set())
     for (cert <- trustManager.getAcceptedIssuers) {
       try {
@@ -341,23 +262,6 @@ class NingAsyncHttpClientConfigBuilder(ningConfig: NingWSClientConfig = DefaultN
         case e: CertPathValidatorException =>
           logger.warn("You are using ws.ssl.default=true and have a weak certificate in your default trust store!  (You can modify ws.ssl.disabledKeyAlgorithms to remove this message.)", e)
       }
-    }
-  }
-
-  /**
-   * Factory that creates an SSLEngine.
-   */
-  class DefaultSSLEngineFactory(config: SSLConfig,
-      sslContext: SSLContext,
-      enabledProtocols: Array[String],
-      enabledCipherSuites: Array[String]) extends SSLEngineFactory {
-    def newSSLEngine(): SSLEngine = {
-      val sslEngine = sslContext.createSSLEngine()
-      sslEngine.setSSLParameters(sslContext.getDefaultSSLParameters)
-      sslEngine.setEnabledProtocols(enabledProtocols)
-      sslEngine.setEnabledCipherSuites(enabledCipherSuites)
-      sslEngine.setUseClientMode(true)
-      sslEngine
     }
   }
 }

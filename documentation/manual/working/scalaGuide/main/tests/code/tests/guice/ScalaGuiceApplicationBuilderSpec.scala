@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package scalaguide.tests.guice
 
@@ -29,7 +29,8 @@ class ScalaGuiceApplicationBuilderSpec extends PlaySpecification {
       val classLoader = new URLClassLoader(Array.empty)
       // #set-environment
       val application = new GuiceApplicationBuilder()
-        .bindings(new play.api.inject.BuiltinModule) // ###skip
+        .load(new play.api.inject.BuiltinModule) // ###skip
+        .loadConfig(Configuration.reference) // ###skip
         .in(Environment(new File("path/to/app"), classLoader, Mode.Test))
         .build
       // #set-environment
@@ -43,7 +44,8 @@ class ScalaGuiceApplicationBuilderSpec extends PlaySpecification {
       val classLoader = new URLClassLoader(Array.empty)
       // #set-environment-values
       val application = new GuiceApplicationBuilder()
-        .bindings(new play.api.inject.BuiltinModule) // ###skip
+        .load(new play.api.inject.BuiltinModule) // ###skip
+        .loadConfig(Configuration.reference) // ###skip
         .in(new File("path/to/app"))
         .in(Mode.Test)
         .in(classLoader)
@@ -83,19 +85,19 @@ class ScalaGuiceApplicationBuilderSpec extends PlaySpecification {
 
     "add bindings" in {
       // #add-bindings
-      val application = new GuiceApplicationBuilder()
+      val injector = new GuiceApplicationBuilder()
         .bindings(new ComponentModule)
         .bindings(bind[Component].to[DefaultComponent])
-        .build
+        .injector
       // #add-bindings
 
-      application.injector.instanceOf[Component] must beAnInstanceOf[DefaultComponent]
+      injector.instanceOf[Component] must beAnInstanceOf[DefaultComponent]
     }
 
     "override bindings" in {
       // #override-bindings
       val application = new GuiceApplicationBuilder()
-        .configure("application.router" -> classOf[Routes].getName) // ###skip
+        .configure("play.http.router" -> classOf[Routes].getName) // ###skip
         .bindings(new ComponentModule) // ###skip
         .overrides(bind[Component].to[MockComponent])
         .build
@@ -109,25 +111,25 @@ class ScalaGuiceApplicationBuilderSpec extends PlaySpecification {
 
     "load modules" in {
       // #load-modules
-      val application = new GuiceApplicationBuilder()
+      val injector = new GuiceApplicationBuilder()
         .load(
           new play.api.inject.BuiltinModule,
           bind[Component].to[DefaultComponent]
-        ).build
+        ).injector
       // #load-modules
 
-      application.injector.instanceOf[Component] must beAnInstanceOf[DefaultComponent]
+      injector.instanceOf[Component] must beAnInstanceOf[DefaultComponent]
     }
 
     "disable modules" in {
       // #disable-modules
-      val application = new GuiceApplicationBuilder()
+      val injector = new GuiceApplicationBuilder()
         .bindings(new ComponentModule) // ###skip
         .disable[ComponentModule]
-        .build
+        .injector
       // #disable-modules
 
-      application.injector.instanceOf[Component] must throwA[com.google.inject.ConfigurationException]
+      injector.instanceOf[Component] must throwA[com.google.inject.ConfigurationException]
     }
 
     "injector builder" in {
@@ -136,7 +138,7 @@ class ScalaGuiceApplicationBuilderSpec extends PlaySpecification {
         .configure("key" -> "value")
         .bindings(new ComponentModule)
         .overrides(bind[Component].to[MockComponent])
-        .build
+        .injector
 
       val component = injector.instanceOf[Component]
       // #injector-builder

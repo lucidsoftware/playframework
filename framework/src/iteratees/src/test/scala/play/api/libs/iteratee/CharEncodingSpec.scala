@@ -1,8 +1,13 @@
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
 package play.api.libs.iteratee
 
 import org.specs2.mutable._
 import scala.concurrent.Await
 import scala.concurrent.duration.Duration
+
+import scala.concurrent.ExecutionContext.Implicits.global
 
 object CharEncodingSpec extends Specification {
 

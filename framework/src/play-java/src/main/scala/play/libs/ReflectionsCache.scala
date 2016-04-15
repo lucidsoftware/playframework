@@ -1,9 +1,7 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.libs
-
-import org.reflections.util.FilterBuilder
 
 /**
  * Provides a cache for reflections, so that classloader scanning over the same classloader for the same package
@@ -32,10 +30,7 @@ object ReflectionsCache {
     }
     reflectionsMap.get(pkg).getOrElse {
 
-      val reflections = new Reflections(new util.ConfigurationBuilder()
-        .addUrls(util.ClasspathHelper.forPackage(pkg, classLoader))
-        .filterInputsBy(new FilterBuilder().include(FilterBuilder.prefix(pkg + ".")))
-        .setScanners(new scanners.TypeAnnotationsScanner, new scanners.TypesScanner))
+      val reflections = new Reflections(Classpath.getReflectionsConfiguration(pkg, classLoader))
 
       reflectionsMap.putIfAbsent(pkg, reflections).getOrElse(reflections)
     }

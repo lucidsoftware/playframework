@@ -1,8 +1,11 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.core.test
 
+import java.security.cert.X509Certificate
+
+import akka.util.ByteString
 import play.api.inject.guice.GuiceInjectorBuilder
 import play.api.inject.{ BindingKey, Binding, Injector }
 import play.api.libs.Files.TemporaryFile
@@ -34,9 +37,9 @@ object Fakes {
  *
  * @param data Headers data.
  */
-case class FakeHeaders(override val data: Seq[(String, Seq[String])] = Seq.empty) extends Headers
+case class FakeHeaders(data: Seq[(String, String)] = Seq.empty) extends Headers(data)
 
-case class FakeRequest[A](method: String, uri: String, headers: FakeHeaders, body: A, remoteAddress: String = "127.0.0.1", version: String = "HTTP/1.1", id: Long = 666, tags: Map[String, String] = Map.empty[String, String], secure: Boolean = false) extends Request[A] {
+case class FakeRequest[A](method: String, uri: String, headers: Headers, body: A, remoteAddress: String = "127.0.0.1", version: String = "HTTP/1.1", id: Long = 666, tags: Map[String, String] = Map.empty[String, String], secure: Boolean = false, clientCertificateChain: Option[Seq[X509Certificate]] = None) extends Request[A] {
 
   private def _copy[B](
     id: Long = this.id,
@@ -45,12 +48,13 @@ case class FakeRequest[A](method: String, uri: String, headers: FakeHeaders, bod
     path: String = this.path,
     method: String = this.method,
     version: String = this.version,
-    headers: FakeHeaders = this.headers,
+    headers: Headers = this.headers,
     remoteAddress: String = this.remoteAddress,
     secure: Boolean = this.secure,
+    clientCertificateChain: Option[Seq[X509Certificate]] = this.clientCertificateChain,
     body: B = this.body): FakeRequest[B] = {
     new FakeRequest[B](
-      method, uri, headers, body, remoteAddress, version, id, tags, secure
+      method, uri, headers, body, remoteAddress, version, id, tags, secure, clientCertificateChain
     )
   }
 
@@ -69,12 +73,7 @@ case class FakeRequest[A](method: String, uri: String, headers: FakeHeaders, bod
    * Constructs a new request with additional headers. Any existing headers of the same name will be replaced.
    */
   def withHeaders(newHeaders: (String, String)*): FakeRequest[A] = {
-    _copy(headers = FakeHeaders({
-      val newData = newHeaders.map {
-        case (k, v) => (k, Seq(v))
-      }
-      (Map() ++ (headers.data ++ newData)).toSeq
-    }))
+    _copy(headers = headers.replace(newHeaders: _*))
   }
 
   /**
@@ -82,7 +81,7 @@ case class FakeRequest[A](method: String, uri: String, headers: FakeHeaders, bod
    */
   def withFlash(data: (String, String)*): FakeRequest[A] = {
     withHeaders(play.api.http.HeaderNames.COOKIE ->
-      Cookies.merge(headers.get(play.api.http.HeaderNames.COOKIE).getOrElse(""),
+      Cookies.mergeCookieHeader(headers.get(play.api.http.HeaderNames.COOKIE).getOrElse(""),
         Seq(Flash.encodeAsCookie(new Flash(flash.data ++ data)))
       )
     )
@@ -93,7 +92,7 @@ case class FakeRequest[A](method: String, uri: String, headers: FakeHeaders, bod
    */
   def withCookies(cookies: Cookie*): FakeRequest[A] = {
     withHeaders(play.api.http.HeaderNames.COOKIE ->
-      Cookies.merge(headers.get(play.api.http.HeaderNames.COOKIE).getOrElse(""), cookies)
+      Cookies.mergeCookieHeader(headers.get(play.api.http.HeaderNames.COOKIE).getOrElse(""), cookies)
     )
   }
 
@@ -102,7 +101,7 @@ case class FakeRequest[A](method: String, uri: String, headers: FakeHeaders, bod
    */
   def withSession(newSessions: (String, String)*): FakeRequest[A] = {
     withHeaders(play.api.http.HeaderNames.COOKIE ->
-      Cookies.merge(headers.get(play.api.http.HeaderNames.COOKIE).getOrElse(""),
+      Cookies.mergeCookieHeader(headers.get(play.api.http.HeaderNames.COOKIE).getOrElse(""),
         Seq(Session.encodeAsCookie(new Session(session.data ++ newSessions)))
       )
     )
@@ -141,8 +140,8 @@ case class FakeRequest[A](method: String, uri: String, headers: FakeHeaders, bod
   /**
    * Adds a raw body to the request
    */
-  def withRawBody(bytes: Array[Byte]): FakeRequest[AnyContentAsRaw] = {
-    _copy(body = AnyContentAsRaw(RawBuffer(bytes.length, bytes)))
+  def withRawBody(bytes: ByteString): FakeRequest[AnyContentAsRaw] = {
+    _copy(body = AnyContentAsRaw(RawBuffer(bytes.size, bytes)))
   }
 
   /**

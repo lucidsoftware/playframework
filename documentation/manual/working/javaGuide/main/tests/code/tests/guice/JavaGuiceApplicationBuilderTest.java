@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package javaguide.tests.guice;
 
@@ -21,6 +21,8 @@ import scala.collection.Seq;
 import static org.hamcrest.CoreMatchers.*;
 import static org.junit.Assert.*;
 import static play.test.Helpers.*;
+
+import static javaguide.tests.FakeApplicationTest.Computer;
 
 // #builder-imports
 import play.Application;
@@ -50,7 +52,8 @@ public class JavaGuiceApplicationBuilderTest {
         ClassLoader classLoader = new URLClassLoader(new URL[0]);
         // #set-environment
         Application application = new GuiceApplicationBuilder()
-            .bindings(new play.api.inject.BuiltinModule(), new play.inject.BuiltInModule()) // ###skip
+            .load(new play.api.inject.BuiltinModule(), new play.inject.BuiltInModule()) // ###skip
+            .loadConfig(Configuration.reference()) // ###skip
             .in(new Environment(new File("path/to/app"), classLoader, Mode.TEST))
             .build();
         // #set-environment
@@ -65,7 +68,8 @@ public class JavaGuiceApplicationBuilderTest {
         ClassLoader classLoader = new URLClassLoader(new URL[0]);
         // #set-environment-values
         Application application = new GuiceApplicationBuilder()
-            .bindings(new play.api.inject.BuiltinModule(), new play.inject.BuiltInModule()) // ###skip
+            .load(new play.api.inject.BuiltinModule(), new play.inject.BuiltInModule()) // ###skip
+            .loadConfig(Configuration.reference()) // ###skip
             .in(new File("path/to/app"))
             .in(Mode.TEST)
             .in(classLoader)
@@ -121,7 +125,7 @@ public class JavaGuiceApplicationBuilderTest {
     public void overrideBindings() {
         // #override-bindings
         Application application = new GuiceApplicationBuilder()
-            .configure("application.router", Routes.class.getName()) // ###skip
+            .configure("play.http.router", Routes.class.getName()) // ###skip
             .bindings(new ComponentModule()) // ###skip
             .overrides(bind(Component.class).to(MockComponent.class))
             .build();
@@ -171,7 +175,7 @@ public class JavaGuiceApplicationBuilderTest {
             .configure("key", "value")
             .bindings(new ComponentModule())
             .overrides(bind(Component.class).to(MockComponent.class))
-            .build();
+            .injector();
 
         Component component = injector.instanceOf(Component.class);
         // #injector-builder
@@ -179,4 +183,23 @@ public class JavaGuiceApplicationBuilderTest {
         assertThat(component, instanceOf(MockComponent.class));
     }
 
+    //#test-guiceapp
+    @Test
+    public void findById() {
+        ClassLoader classLoader = classLoader();
+        Application application = new GuiceApplicationBuilder()
+            .in(new Environment(new File("path/to/app"), classLoader, Mode.TEST))
+            .build();
+
+        running(application, () -> {
+            Computer macintosh = Computer.findById(21l);
+            assertEquals("Macintosh", macintosh.name);
+            assertEquals("1984-01-24", macintosh.introduced);
+        });
+    }
+    //#test-guiceapp
+
+    private ClassLoader classLoader() {
+        return new URLClassLoader(new URL[0]);
+    }
 }

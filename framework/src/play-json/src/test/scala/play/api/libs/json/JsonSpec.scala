@@ -1,17 +1,19 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs.json
 
 import java.util.{ Calendar, Date, TimeZone }
 
-import com.fasterxml.jackson.databind.{ JsonMappingException, JsonNode }
-
+import com.fasterxml.jackson.databind.{ JsonNode, ObjectMapper }
 import play.api.libs.functional.syntax._
 import play.api.libs.json.Json._
 
+import scala.collection.immutable.ListMap
+
 object JsonSpec extends org.specs2.mutable.Specification {
-  "JSON" title
+
+  title("JSON")
 
   case class User(id: Long, name: String, friends: List[User])
 
@@ -53,6 +55,8 @@ object JsonSpec extends org.specs2.mutable.Specification {
       )
     )
   )(Post, unlift(Post.unapply))
+
+  val mapper = new ObjectMapper()
 
   "JSON" should {
     "equals JsObject independently of field order" in {
@@ -114,6 +118,19 @@ object JsonSpec extends org.specs2.mutable.Specification {
             "field1" -> 123
           )
         )
+    }
+
+    "support basic array operations" in {
+      val names = Json.arr("Luigi", "Kinopio", "Yoshi", "Mario")
+      names.head.asOpt[String] must beSome("Luigi")
+      names(0).asOpt[String] must beSome("Luigi")
+      names(3).asOpt[String] must beSome("Mario")
+      names.last.asOpt[String] must beSome("Mario")
+      names.tail.toOption must beSome(Json.arr("Kinopio", "Yoshi", "Mario"))
+
+      val empty = Json.arr()
+      empty.head.toOption must beNone
+      empty.tail.toOption must beNone
     }
 
     "serialize and deserialize maps properly" in {
@@ -264,36 +281,47 @@ object JsonSpec extends org.specs2.mutable.Specification {
     "Not lose precision when parsing big integers" in {
       // By big integers, we just mean integers that overflow long, since Jackson has different code paths for them
       // from decimals
-      val i = BigDecimal("123456789012345678901234567890")
-      val json = toJson(i)
+      val json = toJson(BigDecimal("123456789012345678901234567890"))
       parse(stringify(json)) must equalTo(json)
     }
 
     "Serialize and deserialize Lists" in {
       val xs: List[Int] = (1 to 5).toList
       val json = arr(1, 2, 3, 4, 5)
-      toJson(xs) must equalTo(json)
-      fromJson[List[Int]](json) must equalTo(JsSuccess(xs))
+
+      toJson(xs) must_== json and (
+        fromJson[List[Int]](json) must_== JsSuccess(xs))
     }
 
     "Serialize and deserialize Jackson ObjectNodes" in {
-      val on = JacksonJson.mapper.createObjectNode()
+      val on = mapper.createObjectNode()
         .put("foo", 1).put("bar", "two")
       val json = Json.obj("foo" -> 1, "bar" -> "two")
-      toJson(on) must equalTo(json)
-      fromJson[JsonNode](json).map(_.toString) must_== JsSuccess(on.toString)
+
+      toJson(on) must_== json and (
+        fromJson[JsonNode](json).map(_.toString) must_== JsSuccess(on.toString))
     }
 
     "Serialize and deserialize Jackson ArrayNodes" in {
-      val an = JacksonJson.mapper.createArrayNode()
+      val an = mapper.createArrayNode()
         .add("one").add(2)
       val json = Json.arr("one", 2)
       toJson(an) must equalTo(json) and (
         fromJson[JsonNode](json).map(_.toString) must_== JsSuccess(an.toString))
     }
 
+    "Deserialize integer JsNumber as Jackson number node" in {
+      val jsNum = JsNumber(new java.math.BigDecimal("50"))
+      fromJson[JsonNode](jsNum).map(_.toString) must_== JsSuccess("50")
+    }
+
+    "Deserialize float JsNumber as Jackson number node" in {
+      val jsNum = JsNumber(new java.math.BigDecimal("12.345"))
+      fromJson[JsonNode](jsNum).map(_.toString) must_== JsSuccess("12.345")
+    }
+
     "Map[String,String] should be turned into JsValue" in {
-      toJson(Map("k" -> "v")).toString must equalTo("{\"k\":\"v\"}")
+      toJson(Map("k" -> "v")).toString must_== """{"k":"v"}"""
     }
 
     "Can parse recursive object" in {
@@ -375,9 +403,21 @@ object JsonSpec extends org.specs2.mutable.Specification {
       Json.parse(stream) must beEqualTo(js)
     }
 
-    "throw an exception when stringifying JsUndefined" in {
-      stringify(JsUndefined("test")) must throwA[JsonMappingException]
-      stringify(Json.obj("foo" -> JsUndefined("bar"))) must throwA[JsonMappingException]
+    "keep isomorphism between serialized and deserialized data" in {
+      val original = Json.obj(
+        "key1" -> "value1",
+        "key2" -> true,
+        "key3" -> JsNull,
+        "key4" -> Json.arr(1, 2.5, "value2", false, JsNull),
+        "key5" -> Json.obj(
+          "key6" -> "こんにちは",
+          "key7" -> BigDecimal("12345678901234567890.123456789")
+        )
+      )
+      val originalString = Json.stringify(original)
+      val parsed = Json.parse(originalString)
+      parsed.asInstanceOf[JsObject].fields must_== original.fields
+      Json.stringify(parsed) must_== originalString
     }
   }
 
@@ -430,6 +470,37 @@ object JsonSpec extends org.specs2.mutable.Specification {
       )(unlift(TestCase.unapply))
 
       Json.toJson(TestCase("my-id", "foo", "bar")) must beEqualTo(js)
+    }
+
+    "keep the insertion order on ListMap" in {
+      val test = Json.toJson(
+        ListMap(
+          "name" -> "foo",
+          "zip" -> "foo",
+          "city" -> "foo"
+        ))
+      val req = """{"name":"foo", "zip":"foo", "city":"foo"}"""
+      test.toString must beEqualTo(Json.parse(req).toString).ignoreSpace
+    }
+    "keep insertion order on large ListMap" in {
+      val test = Json.toJson(
+        ListMap(
+          "name" -> "a", "zip" -> "foo", "city" -> "foo",
+          "address" -> "foo", "phone" -> "foo", "latitude" -> "foo",
+          "longitude" -> "foo", "hny" -> "foo", "hz" -> "foo",
+          "hek" -> "foo", "hev" -> "foo", "kny" -> "foo",
+          "kz" -> "foo", "kek" -> "foo", "kev" -> "foo",
+          "szeny" -> "foo", "szez" -> "foo", "szeek" -> "foo",
+          "szeev" -> "foo", "csny" -> "foo", "csz" -> "foo",
+          "csek" -> "foo", "csev" -> "foo", "pny" -> "foo",
+          "pz" -> "foo", "pek" -> "foo", "pev" -> "foo",
+          "szony" -> "foo", "szoz" -> "foo", "szoek" -> "foo",
+          "szoev" -> "foo", "vny" -> "foo", "vz" -> "foo",
+          "vek" -> "foo", "vev" -> "foo"
+        )
+      )
+      val req = """{"name": "a", "zip": "foo", "city": "foo", "address": "foo", "phone": "foo", "latitude": "foo", "longitude": "foo", "hny": "foo", "hz": "foo", "hek": "foo", "hev": "foo", "kny": "foo", "kz": "foo", "kek": "foo", "kev": "foo", "szeny": "foo", "szez": "foo", "szeek": "foo", "szeev": "foo", "csny": "foo", "csz": "foo", "csek": "foo", "csev": "foo", "pny": "foo", "pz": "foo", "pek": "foo", "pev": "foo", "szony": "foo", "szoz": "foo", "szoek": "foo", "szoev": "foo", "vny": "foo", "vz": "foo", "vek": "foo", "vev": "foo"}"""
+      test.toString must beEqualTo(Json.parse(req).toString).ignoreSpace
     }
   }
 }

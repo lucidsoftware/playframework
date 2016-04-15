@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs.iteratee
 
@@ -311,7 +311,7 @@ object EnumerateesSpec extends Specification
 
     "ignores input that doesn't satisfy the predicate and transform the input when matches" in {
       mustExecute(6) { collectEC =>
-        mustTransformTo("One", "Two", "Three", "Four", "Five", "Six")("ONE", "TWO", "SIX")(Enumeratee.collect[String] { case e @ ("One" | "Two" | "Six") => e.toUpperCase }(collectEC))
+        mustTransformTo("One", "Two", "Three", "Four", "Five", "Six")("ONE", "TWO", "SIX")(Enumeratee.collect[String] { case e @ ("One" | "Two" | "Six") => e.toUpperCase(java.util.Locale.ENGLISH) }(collectEC))
       }
     }
 

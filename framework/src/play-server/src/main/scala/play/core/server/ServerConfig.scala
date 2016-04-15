@@ -1,9 +1,8 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.core.server
 
-import com.typesafe.config.{ Config, ConfigFactory }
 import java.io.File
 import java.util.Properties
 import play.api.{ Configuration, Mode }
@@ -37,8 +36,9 @@ case class ServerConfig(
 object ServerConfig {
 
   def apply(
-    rootDir: File,
-    port: Option[Int],
+    classLoader: ClassLoader = this.getClass.getClassLoader,
+    rootDir: File = new File("."),
+    port: Option[Int] = Some(9000),
     sslPort: Option[Int] = None,
     address: String = "0.0.0.0",
     mode: Mode.Mode = Mode.Prod,
@@ -50,46 +50,15 @@ object ServerConfig {
       address = address,
       mode = mode,
       properties = properties,
-      configuration = loadConfiguration(properties, rootDir)
+      configuration = Configuration.load(classLoader, properties, rootDirConfig(rootDir), mode == Mode.Test)
     )
   }
 
   /**
-   * Create a server Configuration object (a wrapper around a Typesafe Config object)
-   * given some Properties. At this moment this just reads from server-reference.conf
-   * and from the given properties.
-   *
-   * @param properties The properties to base the configuration on.
+   * Gets the configuration for the given root directory. Used to construct
+   * the server Configuration.
    */
-  def loadConfiguration(properties: Properties): Configuration = {
-    Configuration(loadDefaultConfig(properties).resolve())
-  }
-
-  /**
-   * Creates a server Configuration with `loadConfiguration(Properties)` but also
-   * sets the given rootDir property as a low-priority configuration option
-   * with the key "play.server.dir".
-   */
-  def loadConfiguration(properties: Properties, rootDir: File): Configuration = {
-    val javaMap = new java.util.HashMap[String, String]()
-    javaMap.put("play.server.dir", rootDir.getAbsolutePath)
-    val rootDirConfig = ConfigFactory.parseMap(javaMap)
-    val config = loadDefaultConfig(properties).withFallback(rootDirConfig).resolve()
-    Configuration(config)
-  }
-
-  private def loadDefaultConfig(properties: Properties): Config = {
-    val userConfig = {
-      def resourceConfig = Option(properties.getProperty("server.config.resource")) map ConfigFactory.parseResources
-      def fileConfig = Option(properties.getProperty("server.config.file")) map (new File(_)) map ConfigFactory.parseFile
-      resourceConfig orElse fileConfig
-    }
-
-    val serverReferenceConfig = ConfigFactory.parseResources(this.getClass.getClassLoader, "server-reference.conf")
-    val systemPropertyConfig = ConfigFactory.parseProperties(properties)
-
-    val configs = Seq(systemPropertyConfig) ++ userConfig ++ Seq(serverReferenceConfig)
-    configs.reduceLeft(_ withFallback _)
-  }
+  def rootDirConfig(rootDir: File): Map[String, String] =
+    Map("play.server.dir" -> rootDir.getAbsolutePath)
 
 }

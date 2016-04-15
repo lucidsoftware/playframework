@@ -1,8 +1,9 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package scalaguide.upload.fileupload {
 
+  import play.api.inject.guice.GuiceApplicationBuilder
   import play.api.mvc._
   import play.api.test._
   import org.junit.runner.RunWith
@@ -42,7 +43,7 @@ package scalaguide.upload.fileupload {
         //#upload-file-action
 
         val request = FakeRequest().withBody(
-          MultipartFormData(Map.empty, Seq(FilePart("picture", "formuploaded", None, TemporaryFile(tmpFile))), Nil, Nil)
+          MultipartFormData(Map.empty, Seq(FilePart("picture", "formuploaded", None, TemporaryFile(tmpFile))), Nil)
         )
         testAction(upload, request)
 
@@ -67,7 +68,7 @@ package scalaguide.upload.fileupload {
     }
 
     def testAction[A](action: Action[A], request: => Request[A] = FakeRequest(), expectedResponse: Int = OK) = {
-      running(FakeApplication(additionalConfiguration = Map("application.secret" -> "pass"))) {
+      running(GuiceApplicationBuilder().build()) {
 
         val result = action(request)
 

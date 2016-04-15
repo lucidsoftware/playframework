@@ -1,8 +1,9 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.test;
 
+import akka.stream.Materializer;
 import org.junit.After;
 import org.junit.Before;
 import play.Application;
@@ -17,6 +18,11 @@ public class WithApplication {
     protected Application app;
 
     /**
+     * The application's Akka streams Materializer.
+     */
+    protected Materializer mat;
+
+    /**
      * Override this method to setup the application to use.
      *
      * By default this will call the old {@link #provideFakeApplication() provideFakeApplication} method.
@@ -28,13 +34,15 @@ public class WithApplication {
     }
 
     /**
-     * Old method - use the new {@link #provideApplication() provideApplication} method instead.
      *
      * Override this method to setup the fake application to use.
      *
+     * @deprecated use the new {@link #provideApplication() provideApplication} method instead.
+     *
      * @return The fake application to use
      */
-    protected FakeApplication provideFakeApplication() {
+    @Deprecated
+    protected Application provideFakeApplication() {
         return Helpers.fakeApplication();
     }
 
@@ -42,6 +50,7 @@ public class WithApplication {
     public void startPlay() {
         app = provideApplication();
         Helpers.start(app);
+        mat = app.getWrappedApplication().materializer();
     }
 
     @After

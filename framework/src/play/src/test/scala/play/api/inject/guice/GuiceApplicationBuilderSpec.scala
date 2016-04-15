@@ -1,28 +1,28 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.inject
 package guice
 
-import akka.actor.ActorSystem
-import com.google.inject.AbstractModule
-import javax.inject.{ Inject, Provider }
+import javax.inject.{ Inject, Provider, Singleton }
+
+import com.google.inject.{ ProvisionException, CreationException }
 import org.specs2.mutable.Specification
-import play.api.{ Configuration, Environment, GlobalSettings }
+import play.api.{ Configuration, Environment }
 
 object GuiceApplicationBuilderSpec extends Specification {
 
   "GuiceApplicationBuilder" should {
 
     "add bindings" in {
-      val app = new GuiceApplicationBuilder()
+      val injector = new GuiceApplicationBuilder()
         .bindings(
           new AModule,
           bind[B].to[B1])
-        .build
+        .injector
 
-      app.injector.instanceOf[A] must beAnInstanceOf[A1]
-      app.injector.instanceOf[B] must beAnInstanceOf[B1]
+      injector.instanceOf[A] must beAnInstanceOf[A1]
+      injector.instanceOf[B] must beAnInstanceOf[B1]
     }
 
     "override bindings" in {
@@ -38,14 +38,14 @@ object GuiceApplicationBuilderSpec extends Specification {
     }
 
     "disable modules" in {
-      val app = new GuiceApplicationBuilder()
+      val injector = new GuiceApplicationBuilder()
         .bindings(new AModule)
-        .disable[play.api.libs.concurrent.AkkaModule]
+        .disable[play.api.i18n.I18nModule]
         .disable(classOf[AModule])
-        .build
+        .injector
 
-      app.injector.instanceOf[ActorSystem] must throwA[com.google.inject.ConfigurationException]
-      app.injector.instanceOf[A] must throwA[com.google.inject.ConfigurationException]
+      injector.instanceOf[play.api.i18n.Langs] must throwA[com.google.inject.ConfigurationException]
+      injector.instanceOf[A] must throwA[com.google.inject.ConfigurationException]
     }
 
     "set initial configuration loader" in {
@@ -57,43 +57,54 @@ object GuiceApplicationBuilderSpec extends Specification {
       app.configuration.getInt("a") must beSome(1)
     }
 
-    "set initial configuration" in {
-      val app = new GuiceApplicationBuilder()
-        .loadConfig(Configuration.empty)
-        .bindings(new BuiltinModule)
-        .build
-
-      app.configuration.keys must beEmpty
-    }
-
-    "set global settings" in {
-      val global = new GlobalSettings {
-        override def configuration = Configuration("a" -> 1)
-      }
-
-      val app = new GuiceApplicationBuilder()
-        .global(global)
-        .build
-
-      app.configuration.getInt("a") must beSome(1)
-    }
-
     "set module loader" in {
-      val app = new GuiceApplicationBuilder()
+      val injector = new GuiceApplicationBuilder()
         .load((env, conf) => Seq(new BuiltinModule, bind[A].to[A1]))
-        .build
+        .injector
 
-      app.injector.instanceOf[A] must beAnInstanceOf[A1]
+      injector.instanceOf[A] must beAnInstanceOf[A1]
     }
 
     "set loaded modules directly" in {
-      val app = new GuiceApplicationBuilder()
+      val injector = new GuiceApplicationBuilder()
         .load(new BuiltinModule, bind[A].to[A1])
-        .build
+        .injector
 
-      app.injector.instanceOf[A] must beAnInstanceOf[A1]
+      injector.instanceOf[A] must beAnInstanceOf[A1]
     }
 
+    "eagerly load singletons" in {
+      new GuiceApplicationBuilder()
+        .load(new BuiltinModule, bind[C].to[C1])
+        .eagerlyLoaded()
+        .injector() must throwAn[CreationException]
+    }
+
+    "set lazy load singletons" in {
+      val builder = new GuiceApplicationBuilder()
+        .load(new BuiltinModule, bind[C].to[C1])
+
+      builder.injector() must throwAn[CreationException].not
+      builder.injector().instanceOf[C] must throwAn[ProvisionException]
+    }
+
+    "display logger deprecation message" in {
+      List("logger", "logger.resource", "logger.resource.test").forall { path =>
+        List("DEBUG", "WARN", "INFO", "ERROR", "TRACE", "OFF").forall { value =>
+          val data = Map(path -> value)
+          val builder = new GuiceApplicationBuilder()
+          builder.shouldDisplayLoggerDeprecationMessage(Configuration.from(data)) must_=== true
+        }
+      }
+    }
+
+    "not display logger deprecation message" in {
+      List("logger", "logger.resource", "logger.resource.test").forall { path =>
+        val data = Map(path -> "NOT_A_DEPRECATED_VALUE")
+        val builder = new GuiceApplicationBuilder()
+        builder.shouldDisplayLoggerDeprecationMessage(Configuration.from(data)) must_=== false
+      }
+    }
   }
 
   trait A
@@ -117,5 +128,14 @@ object GuiceApplicationBuilderSpec extends Specification {
       current ++ Configuration.from(conf.toMap)
     }
   }
+
+  trait C
+
+  @Singleton
+  class C1 extends C {
+    throw new EagerlyLoadedException
+  }
+
+  class EagerlyLoadedException extends RuntimeException
 
 }

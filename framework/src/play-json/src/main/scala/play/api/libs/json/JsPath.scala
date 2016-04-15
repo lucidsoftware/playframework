@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs.json
 
@@ -18,15 +18,9 @@ sealed trait PathNode {
 
 case class RecursiveSearch(key: String) extends PathNode {
   def apply(json: JsValue): List[JsValue] = json match {
-    case obj: JsObject => (json \\ key).toList.filterNot {
-      case JsUndefined() => true
-      case _ => false
-    }
-    case arr: JsArray => (json \\ key).toList.filterNot {
-      case JsUndefined() => true
-      case _ => false
-    }
-    case _ => List()
+    case obj: JsObject => (json \\ key).toList
+    case arr: JsArray => (json \\ key).toList
+    case _ => Nil
   }
   override def toString = "//" + key
   def toJsonString = "*" + key
@@ -65,10 +59,7 @@ case class RecursiveSearch(key: String) extends PathNode {
 case class KeyPathNode(key: String) extends PathNode {
 
   def apply(json: JsValue): List[JsValue] = json match {
-    case obj: JsObject => List(json \ key).filterNot {
-      case JsUndefined() => true
-      case _ => false
-    }
+    case obj: JsObject => List(json \ key).flatMap(_.toOption)
     case _ => List()
   }
 
@@ -105,7 +96,7 @@ case class KeyPathNode(key: String) extends PathNode {
 
 case class IdxPathNode(idx: Int) extends PathNode {
   def apply(json: JsValue): List[JsValue] = json match {
-    case arr: JsArray => List(arr(idx))
+    case arr: JsArray => List(arr(idx)).flatMap(_.toOption)
     case _ => List()
   }
 
@@ -172,6 +163,7 @@ case class JsPath(path: List[PathNode] = List()) {
   def \\(child: Symbol) = JsPath(path :+ RecursiveSearch(child.name))
 
   def apply(idx: Int): JsPath = JsPath(path :+ IdxPathNode(idx))
+  def \(idx: Int): JsPath = apply(idx)
 
   def apply(json: JsValue): List[JsValue] = path.foldLeft(List(json))((s, p) => s.flatMap(p.apply))
 
@@ -181,9 +173,9 @@ case class JsPath(path: List[PathNode] = List()) {
     case _ :: _ => JsError(Seq(this -> Seq(ValidationError("error.path.result.multiple"))))
   }
 
-  def asSingleJson(json: JsValue): JsValue = this(json) match {
+  def asSingleJson(json: JsValue): JsLookupResult = this(json) match {
     case Nil => JsUndefined("error.path.missing")
-    case List(js) => js
+    case List(js) => JsDefined(js)
     case _ :: _ => JsUndefined("error.path.result.multiple")
   }
 
@@ -418,7 +410,7 @@ case class JsPath(path: List[PathNode] = List()) {
 
   object json {
     /**
-     * (__ \ 'key).json.pick[A <: JsValue] is a Reads[A] that:
+     * (`__` \ 'key).json.pick[A <: JsValue] is a Reads[A] that:
      * - picks the given value at the given JsPath (WITHOUT THE PATH) from the input JS
      * - validates this element as an object of type A (inheriting JsValue)
      * - returns a JsResult[A]
@@ -435,7 +427,7 @@ case class JsPath(path: List[PathNode] = List()) {
     def pick[A <: JsValue](implicit r: Reads[A]): Reads[A] = Reads.jsPick(self)
 
     /**
-     * (__ \ 'key).json.pick is a Reads[JsValue] that:
+     * (`__` \ 'key).json.pick is a Reads[JsValue] that:
      * - picks the given value at the given JsPath (WITHOUT THE PATH) from the input JS
      * - validates this element as an object of type JsValue
      * - returns a JsResult[JsValue]
@@ -452,7 +444,7 @@ case class JsPath(path: List[PathNode] = List()) {
     def pick: Reads[JsValue] = pick[JsValue]
 
     /**
-     * (__ \ 'key).json.pickBranch[A <: JsValue](readsOfA) is a Reads[JsObject] that:
+     * (`__` \ 'key).json.pickBranch[A <: JsValue](readsOfA) is a Reads[JsObject] that:
      * - copies the given branch (JsPath + relative JsValue) from the input JS at this given JsPath
      * - validates this relative JsValue as an object of type A (inheriting JsValue) potentially modifying it
      * - creates a JsObject from JsPath and validated JsValue
@@ -470,7 +462,7 @@ case class JsPath(path: List[PathNode] = List()) {
     def pickBranch[A <: JsValue](reads: Reads[A]): Reads[JsObject] = Reads.jsPickBranch[A](self)(reads)
 
     /**
-     * (__ \ 'key).json.pickBranch is a Reads[JsObject] that:
+     * (`__` \ 'key).json.pickBranch is a Reads[JsObject] that:
      * - copies the given branch (JsPath + relative JsValue) from the input JS at this given JsPath
      * - creates a JsObject from JsPath and JsValue
      * - returns a JsResult[JsObject]
@@ -487,7 +479,7 @@ case class JsPath(path: List[PathNode] = List()) {
     def pickBranch: Reads[JsObject] = Reads.jsPickBranch[JsValue](self)
 
     /**
-     * (__ \ 'key).put(fixedValue) is a Reads[JsObject] that:
+     * (`__` \ 'key).put(fixedValue) is a Reads[JsObject] that:
      * - creates a JsObject setting A (inheriting JsValue) at given JsPath
      * - returns a JsResult[JsObject]
      *
@@ -504,7 +496,7 @@ case class JsPath(path: List[PathNode] = List()) {
     def put(a: => JsValue): Reads[JsObject] = Reads.jsPut(self, a)
 
     /**
-     * (__ \ 'key).json.copyFrom(reads) is a Reads[JsObject] that:
+     * (`__` \ 'key).json.copyFrom(reads) is a Reads[JsObject] that:
      * - copies a JsValue using passed Reads[A]
      * - creates a new branch from JsPath and copies previous value into it
      *
@@ -520,7 +512,7 @@ case class JsPath(path: List[PathNode] = List()) {
     def copyFrom[A <: JsValue](reads: Reads[A]): Reads[JsObject] = Reads.jsCopyTo(self)(reads)
 
     /**
-     * (__ \ 'key).json.update(reads) is the most complex Reads[JsObject] but the most powerful:
+     * (`__` \ 'key).json.update(reads) is the most complex Reads[JsObject] but the most powerful:
      * - copies the whole JsValue => A
      * - applies the passed Reads[A] on JsValue => B
      * - deep merges both JsValues (A ++ B) so B overwrites A identical branches
@@ -537,7 +529,7 @@ case class JsPath(path: List[PathNode] = List()) {
     def update[A <: JsValue](reads: Reads[A]): Reads[JsObject] = Reads.jsUpdate(self)(reads)
 
     /**
-     * (__ \ 'key).json.prune is Reads[JsObject] that prunes the branch and returns remaining JsValue
+     * (`__` \ 'key).json.prune is Reads[JsObject] that prunes the branch and returns remaining JsValue
      *
      * Example :
      * {{{

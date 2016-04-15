@@ -1,13 +1,11 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs.iteratee
 
 import org.specs2.mutable._
-import java.io.OutputStream
-import java.util.concurrent.{ CountDownLatch, TimeUnit }
-import scala.concurrent.{ ExecutionContext, Promise, Future, Await }
-import scala.util.{ Failure, Success, Try }
+import scala.concurrent.{ Future, ExecutionContext }
+import scala.util.{ Failure, Try }
 
 object IterateesSpec extends Specification
     with IterateeSpecification with ExecutionSpecification {
@@ -308,7 +306,7 @@ object IterateesSpec extends Specification
 
     "fold input, stopping early" in {
       mustExecute(3) { foldEC =>
-        val folder = (x: Int, y: Int) => Future.successful((x + y, (y > 2)))
+        val folder = (x: Int, y: Int) => Future.successful((x + y, y > 2))
         await(Enumerator(1, 2, 3, 4) |>>> Iteratee.fold2[Int, Int](0)(folder)(foldEC)) must equalTo(6)
       }
     }
@@ -442,7 +440,7 @@ object IterateesSpec extends Specification
 
     "do nothing on a Done iteratee" in {
       mustExecute(1) { implicit foldEC =>
-        val it = done(expected).recoverM { case t: Throwable => Future.successful(unexpected) }
+        val it = done(expected).recoverM { case t: Throwable => Future.successful(unexpected) }(foldEC)
         val actual = await(Enumerator(unexpected) |>>> it)
         actual must equalTo(expected)
       }
@@ -450,7 +448,7 @@ object IterateesSpec extends Specification
 
     "do nothing on a Done iteratee even if the recover block gets a failed Future" in {
       mustExecute(1) { implicit foldEC =>
-        val it = done(expected).recoverM { case t: Throwable => Future.failed(new RuntimeException(unexpected)) }
+        val it = done(expected).recoverM { case t: Throwable => Future.failed(new RuntimeException(unexpected)) }(foldEC)
         val actual = await(Enumerator(unexpected) |>>> it)
         actual must equalTo(expected)
       }
@@ -458,7 +456,7 @@ object IterateesSpec extends Specification
 
     "recover with the expected fallback Future from an Error iteratee" in {
       mustExecute(2) { implicit foldEC =>
-        val it = error(unexpected).recoverM { case t: Throwable => Future.successful(expected) }
+        val it = error(unexpected).recoverM { case t: Throwable => Future.successful(expected) }(foldEC)
         val actual = await(Enumerator(unexpected) |>>> it)
         actual must equalTo(expected)
       }
@@ -466,7 +464,7 @@ object IterateesSpec extends Specification
 
     "leave the Error iteratee unchanged if the Exception type doesn't match the partial function" in {
       mustExecute(1) { implicit foldEC =>
-        val it = error(expected).recoverM { case t: IllegalArgumentException => Future.successful(unexpected) }
+        val it = error(expected).recoverM { case t: IllegalArgumentException => Future.successful(unexpected) }(foldEC)
         val actual = await((Enumerator(unexpected) |>>> it).failed)
         actual.getMessage must equalTo(expected)
       }

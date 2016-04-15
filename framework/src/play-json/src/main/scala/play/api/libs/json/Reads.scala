@@ -1,18 +1,23 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs.json
 
 import java.time.{
   Clock,
+  DateTimeException,
   Instant,
   LocalDate,
   LocalDateTime,
+  OffsetDateTime,
   ZoneId,
+  ZoneOffset,
   ZonedDateTime
 }
 import java.time.format.{ DateTimeFormatter, DateTimeParseException }
 import java.time.temporal.UnsupportedTemporalTypeException
+
+import play.api.libs.json.jackson.JacksonJson
 
 import scala.annotation.implicitNotFound
 import scala.collection._
@@ -31,8 +36,7 @@ import reflect.ClassTag
 @implicitNotFound(
   "No Json deserializer found for type ${A}. Try to implement an implicit Reads or Format for this type."
 )
-trait Reads[A] {
-  self =>
+trait Reads[A] { self =>
   /**
    * Convert the JsValue into a A
    */
@@ -42,20 +46,24 @@ trait Reads[A] {
     Reads[B] { json => self.reads(json).map(f) }
 
   def flatMap[B](f: A => Reads[B]): Reads[B] = Reads[B] { json =>
-    self.reads(json).flatMap(t => f(t).reads(json))
+    // Do not flatMap result to avoid repath
+    self.reads(json) match {
+      case JsSuccess(a, _) => f(a).reads(json)
+      case error: JsError => error
+    }
   }
 
   def filter(f: A => Boolean): Reads[A] =
     Reads[A] { json => self.reads(json).filter(f) }
 
   def filter(error: ValidationError)(f: A => Boolean): Reads[A] =
-    Reads[A] { json => self.reads(json).filter(error)(f) }
+    Reads[A] { json => self.reads(json).filter(JsError(error))(f) }
 
   def filterNot(f: A => Boolean): Reads[A] =
     Reads[A] { json => self.reads(json).filterNot(f) }
 
   def filterNot(error: ValidationError)(f: A => Boolean): Reads[A] =
-    Reads[A] { json => self.reads(json).filterNot(error)(f) }
+    Reads[A] { json => self.reads(json).filterNot(JsError(error))(f) }
 
   def collect[B](error: ValidationError)(f: PartialFunction[A, B]) =
     Reads[B] { json => self.reads(json).collect(error)(f) }
@@ -71,7 +79,8 @@ trait Reads[A] {
       }
     }
 
-  def andThen[B](rb: Reads[B])(implicit witness: A <:< JsValue): Reads[B] = rb.compose(this.map(witness))
+  def andThen[B](rb: Reads[B])(implicit witness: A <:< JsValue): Reads[B] =
+    rb.compose(this.map(witness))
 
 }
 
@@ -107,13 +116,14 @@ object Reads extends ConstraintReads with PathReads with DefaultReads {
         }
       }
     }
-    def empty: Reads[Nothing] = new Reads[Nothing] { def reads(js: JsValue) = JsError(Seq()) }
+
+    def empty: Reads[Nothing] =
+      new Reads[Nothing] { def reads(js: JsValue) = JsError(Seq()) }
 
   }
 
-  def apply[A](f: JsValue => JsResult[A]): Reads[A] = new Reads[A] {
-    def reads(json: JsValue) = f(json)
-  }
+  def apply[A](f: JsValue => JsResult[A]): Reads[A] =
+    new Reads[A] { def reads(json: JsValue) = f(json) }
 
   implicit def functorReads(implicit a: Applicative[Reads]) = new Functor[Reads] {
     def fmap[A, B](reads: Reads[A], f: A => B): Reads[B] = a.map(reads, f)
@@ -135,9 +145,47 @@ object Reads extends ConstraintReads with PathReads with DefaultReads {
 }
 
 /**
+ * Low priority reads.
+ *
+ * This exists as a compiler performance optimisation, so that the compiler doesn't have to rule them out when
+ * DefaultReads provides a simple match.
+ *
+ * See https://github.com/playframework/playframework/issues/4313 for more details.
+ */
+trait LowPriorityDefaultReads {
+
+  /**
+   * Generic deserializer for collections types.
+   */
+  implicit def traversableReads[F[_], A](implicit bf: generic.CanBuildFrom[F[_], A, F[A]], ra: Reads[A]) = new Reads[F[A]] {
+    def reads(json: JsValue) = json match {
+      case JsArray(ts) =>
+
+        type Errors = Seq[(JsPath, Seq[ValidationError])]
+        def locate(e: Errors, idx: Int) = e.map { case (p, valerr) => (JsPath(idx)) ++ p -> valerr }
+
+        ts.iterator.zipWithIndex.foldLeft(Right(Vector.empty): Either[Errors, Vector[A]]) {
+          case (acc, (elt, idx)) => (acc, fromJson[A](elt)(ra)) match {
+            case (Right(vs), JsSuccess(v, _)) => Right(vs :+ v)
+            case (Right(_), JsError(e)) => Left(locate(e, idx))
+            case (Left(e), _: JsSuccess[_]) => Left(e)
+            case (Left(e1), JsError(e2)) => Left(e1 ++ locate(e2, idx))
+          }
+        }.fold(JsError.apply, { res =>
+          val builder = bf()
+          builder.sizeHint(res)
+          builder ++= res
+          JsSuccess(builder.result())
+        })
+      case _ => JsError(Seq(JsPath() -> Seq(ValidationError("error.expected.jsarray"))))
+    }
+  }
+}
+
+/**
  * Default deserializer type classes.
  */
-trait DefaultReads {
+trait DefaultReads extends LowPriorityDefaultReads {
   import scala.language.implicitConversions
 
   /**
@@ -161,8 +209,9 @@ trait DefaultReads {
    */
   implicit object IntReads extends Reads[Int] {
     def reads(json: JsValue) = json match {
-      case JsNumber(n) => JsSuccess(n.toInt)
-      case _ => JsError(Seq(JsPath() -> Seq(ValidationError("error.expected.jsnumber"))))
+      case JsNumber(n) if n.isValidInt => JsSuccess(n.toInt)
+      case JsNumber(n) => JsError("error.expected.int")
+      case _ => JsError("error.expected.jsnumber")
     }
   }
 
@@ -171,8 +220,9 @@ trait DefaultReads {
    */
   implicit object ShortReads extends Reads[Short] {
     def reads(json: JsValue) = json match {
-      case JsNumber(n) => JsSuccess(n.toShort)
-      case _ => JsError(Seq(JsPath() -> Seq(ValidationError("error.expected.jsnumber"))))
+      case JsNumber(n) if n.isValidShort => JsSuccess(n.toShort)
+      case JsNumber(n) => JsError("error.expected.short")
+      case _ => JsError("error.expected.jsnumber")
     }
   }
 
@@ -181,8 +231,9 @@ trait DefaultReads {
    */
   implicit object ByteReads extends Reads[Byte] {
     def reads(json: JsValue) = json match {
-      case JsNumber(n) => JsSuccess(n.toByte)
-      case _ => JsError(Seq(JsPath() -> Seq(ValidationError("error.expected.jsnumber"))))
+      case JsNumber(n) if n.isValidByte => JsSuccess(n.toByte)
+      case JsNumber(n) => JsError("error.expected.byte")
+      case _ => JsError("error.expected.jsnumber")
     }
   }
 
@@ -191,8 +242,9 @@ trait DefaultReads {
    */
   implicit object LongReads extends Reads[Long] {
     def reads(json: JsValue) = json match {
-      case JsNumber(n) => JsSuccess(n.toLong)
-      case _ => JsError(Seq(JsPath() -> Seq(ValidationError("error.expected.jsnumber"))))
+      case JsNumber(n) if n.isValidLong => JsSuccess(n.toLong)
+      case JsNumber(n) => JsError("error.expected.long")
+      case _ => JsError("error.expected.jsnumber")
     }
   }
 
@@ -202,7 +254,7 @@ trait DefaultReads {
   implicit object FloatReads extends Reads[Float] {
     def reads(json: JsValue) = json match {
       case JsNumber(n) => JsSuccess(n.toFloat)
-      case _ => JsError(Seq(JsPath() -> Seq(ValidationError("error.expected.jsnumber"))))
+      case _ => JsError("error.expected.jsnumber")
     }
   }
 
@@ -212,7 +264,7 @@ trait DefaultReads {
   implicit object DoubleReads extends Reads[Double] {
     def reads(json: JsValue) = json match {
       case JsNumber(n) => JsSuccess(n.toDouble)
-      case _ => JsError(Seq(JsPath() -> Seq(ValidationError("error.expected.jsnumber"))))
+      case _ => JsError("error.expected.jsnumber")
     }
   }
 
@@ -266,7 +318,6 @@ trait DefaultReads {
     df.setLenient(false)
     try { Some(df.parse(input)) } catch {
       case x: java.text.ParseException =>
-        println(s"=> $pattern -> ${x.getMessage}")
         None
     }
   }
@@ -284,14 +335,8 @@ trait DefaultReads {
   /** Parsing companion */
   object TemporalParser {
     /** Instance of local date/time based on specified pattern. */
-    implicit def LocalDateTimePatternParser(pattern: String): TemporalParser[LocalDateTime] = new TemporalParser[LocalDateTime] {
-      def parse(input: String): Option[LocalDateTime] = try {
-        Some(LocalDateTime.parse(input, DateTimeFormatter.ofPattern(pattern)))
-      } catch {
-        case _: DateTimeParseException => None
-        case _: UnsupportedTemporalTypeException => None
-      }
-    }
+    implicit def LocalDateTimePatternParser(pattern: String): TemporalParser[LocalDateTime] =
+      LocalDateTimeFormatterParser(DateTimeFormatter.ofPattern(pattern))
 
     /** Instance of local date/time based on formatter. */
     implicit def LocalDateTimeFormatterParser(formatter: DateTimeFormatter): TemporalParser[LocalDateTime] = new TemporalParser[LocalDateTime] {
@@ -303,15 +348,23 @@ trait DefaultReads {
       }
     }
 
-    /** Instance of date based on specified pattern. */
-    implicit def DatePatternParser(pattern: String): TemporalParser[LocalDate] = new TemporalParser[LocalDate] {
-      def parse(input: String): Option[LocalDate] = try {
-        Some(LocalDate.parse(input, DateTimeFormatter.ofPattern(pattern)))
+    /** Instance of offset date/time based on specified pattern. */
+    implicit def OffsetDateTimePatternParser(pattern: String): TemporalParser[OffsetDateTime] =
+      OffsetDateTimeFormatterParser(DateTimeFormatter.ofPattern(pattern))
+
+    /** Instance of offset date/time based on formatter. */
+    implicit def OffsetDateTimeFormatterParser(formatter: DateTimeFormatter): TemporalParser[OffsetDateTime] = new TemporalParser[OffsetDateTime] {
+      def parse(input: String): Option[OffsetDateTime] = try {
+        Some(OffsetDateTime.parse(input, formatter))
       } catch {
         case _: DateTimeParseException => None
         case _: UnsupportedTemporalTypeException => None
       }
     }
+
+    /** Instance of date based on specified pattern. */
+    implicit def DatePatternParser(pattern: String): TemporalParser[LocalDate] =
+      DateFormatterParser(DateTimeFormatter.ofPattern(pattern))
 
     /** Instance of date based on formatter. */
     implicit def DateFormatterParser(formatter: DateTimeFormatter): TemporalParser[LocalDate] = new TemporalParser[LocalDate] {
@@ -324,59 +377,30 @@ trait DefaultReads {
     }
 
     /** Instance of instant parser based on specified pattern. */
-    implicit def InstantPatternParser(pattern: String): TemporalParser[Instant] = new TemporalParser[Instant] {
-      def parse(input: String): Option[Instant] = try {
-        val time = LocalDateTime.parse(
-          input, DateTimeFormatter.ofPattern(pattern))
-
-        Some(Instant parse s"${time.toString}Z")
-      } catch {
-        case _: DateTimeParseException => None
-        case _: UnsupportedTemporalTypeException => None
-      }
-    }
+    implicit def InstantPatternParser(pattern: String): TemporalParser[Instant] =
+      InstantFormatterParser(DateTimeFormatter.ofPattern(pattern))
 
     /** Instance of instant parser based on formatter. */
     implicit def InstantFormatterParser(formatter: DateTimeFormatter): TemporalParser[Instant] = new TemporalParser[Instant] {
       def parse(input: String): Option[Instant] = try {
-        val time = LocalDateTime.parse(input, formatter)
-        Some(Instant parse s"${time.toString}Z")
+        Some(Instant.from(formatter.parse(input)))
       } catch {
+        case _: DateTimeException => None
         case _: DateTimeParseException => None
         case _: UnsupportedTemporalTypeException => None
       }
     }
 
     /** Instance of zoned date/time based on specified pattern. */
-    implicit def ZonedDateTimePatternParser(pattern: String): TemporalParser[ZonedDateTime] = new TemporalParser[ZonedDateTime] {
-      def parse(input: String): Option[ZonedDateTime] = try {
-        Some(ZonedDateTime.parse(input, DateTimeFormatter.ofPattern(pattern)))
-      } catch {
-        case _: DateTimeParseException => try {
-          Some(LocalDateTime.parse(input,
-            DateTimeFormatter.ofPattern(pattern)).atZone(ZoneId.systemDefault))
-
-        } catch {
-          case _: DateTimeParseException => None
-          case _: UnsupportedTemporalTypeException => None
-        }
-        case _: UnsupportedTemporalTypeException => None
-      }
-    }
+    implicit def ZonedDateTimePatternParser(pattern: String): TemporalParser[ZonedDateTime] =
+      ZonedDateTimeFormatterParser(DateTimeFormatter.ofPattern(pattern))
 
     /** Instance of zoned date/time based on formatter. */
     implicit def ZonedDateTimeFormatterParser(formatter: DateTimeFormatter): TemporalParser[ZonedDateTime] = new TemporalParser[ZonedDateTime] {
       def parse(input: String): Option[ZonedDateTime] = try {
         Some(ZonedDateTime.parse(input, formatter))
       } catch {
-        case _: DateTimeParseException => try {
-          Some(LocalDateTime.parse(input, formatter).
-            atZone(ZoneId.systemDefault))
-
-        } catch {
-          case _: DateTimeParseException => None
-          case _: UnsupportedTemporalTypeException => None
-        }
+        case _: DateTimeParseException => None
         case _: UnsupportedTemporalTypeException => None
       }
     }
@@ -384,14 +408,12 @@ trait DefaultReads {
 
   /**
    * Reads for the `java.time.LocalDateTime` type.
-   * When input value doesn't specify the time zone,
-   * then `java.time.ZoneId.systemDefault` is used.
    *
    * @tparam T Type of argument to instantiate date/time parser
    * @param parsing Argument to instantiate date/time parser. Actually either a pattern (string) or a formatter (`java.time.format.DateTimeFormatter`)
    * @param corrector a simple string transformation function that can be used to transform input String before parsing. Useful when standards are not exactly respected and require a few tweaks. Function `identity` can be passed if no correction is needed.
    * @param p Typeclass instance based on `parsing`
-   * @see [[TemporalFormatter]]
+   * @see [[DefaultWrites.TemporalFormatter]]
    *
    * {{{
    * import play.api.libs.json.Java8Reads.localDateTimeReads
@@ -403,7 +425,6 @@ trait DefaultReads {
    * }}}
    */
   def localDateTimeReads[T](parsing: T, corrector: String => String = identity)(implicit p: T => TemporalParser[LocalDateTime]): Reads[LocalDateTime] = new Reads[LocalDateTime] {
-
     def reads(json: JsValue): JsResult[LocalDateTime] = json match {
       case JsNumber(d) => JsSuccess(epoch(d.toLong))
       case JsString(s) => p(parsing).parse(corrector(s)) match {
@@ -416,7 +437,7 @@ trait DefaultReads {
     }
 
     @inline def epoch(millis: Long): LocalDateTime = LocalDateTime.ofInstant(
-      Instant.ofEpochMilli(millis), ZoneId.systemDefault)
+      Instant.ofEpochMilli(millis), ZoneOffset.UTC)
   }
 
   /**
@@ -427,9 +448,10 @@ trait DefaultReads {
     localDateTimeReads(DateTimeFormatter.ISO_DATE_TIME)
 
   /**
-   * Reads for the `java.time.ZonedDateTime` type.
-   * When input value doesn't specify the time zone,
-   * then `java.time.ZoneId.systemDefault` is used.
+   * Reads for the `java.time.OffsetDateTime` type.
+   *
+   * Note: it is intentionally not supported to read an OffsetDateTime from a
+   * number.
    *
    * @tparam T Type of argument to instantiate date/time parser
    * @param parsing Argument to instantiate date/time parser. Actually either a pattern (string) or a formatter (`java.time.format.DateTimeFormatter`)
@@ -437,6 +459,42 @@ trait DefaultReads {
    * @param p Typeclass instance based on `parsing`
    * @see [[TemporalFormatter]]
    *
+   * {{{
+    * import play.api.libs.json.Reads.offsetDateTimeReads
+    *
+    * val customReads1 = offsetDateTimeReads("dd/MM/yyyy, HH:mm:ss (Z)")
+    * val customReads2 = offsetDateTimeReads(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+    * val customReads3 = offsetDateTimeReads(
+    *   DateTimeFormatter.ISO_OFFSET_DATE_TIME, _.drop(1))
+   * }}}
+   */
+  def offsetDateTimeReads[T](parsing: T, corrector: String => String = identity)(implicit p: T => TemporalParser[OffsetDateTime]): Reads[OffsetDateTime] = new Reads[OffsetDateTime] {
+    def reads(json: JsValue): JsResult[OffsetDateTime] = json match {
+      case JsString(s) => p(parsing).parse(corrector(s)) match {
+        case Some(d) => JsSuccess(d)
+        case None => JsError(Seq(JsPath() ->
+          Seq(ValidationError("error.expected.date.isoformat", parsing))))
+      }
+      case _ => JsError(Seq(JsPath() ->
+        Seq(ValidationError("error.expected.date"))))
+    }
+  }
+
+  /**
+   * The default typeclass to reads `java.time.OffsetDateTime` from JSON.
+   * Accepts date/time formats as '2011-12-03T10:15:30+01:00' or '2011-12-03T10:15:30+01:00[Europe/Paris]'.
+   */
+  implicit val DefaultOffsetDateTimeReads =
+    offsetDateTimeReads(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+
+  /**
+   * Reads for the `java.time.ZonedDateTime` type.
+   *
+   * @tparam T Type of argument to instantiate date/time parser
+   * @param parsing Argument to instantiate date/time parser. Actually either a pattern (string) or a formatter (`java.time.format.DateTimeFormatter`)
+   * @param corrector a simple string transformation function that can be used to transform input String before parsing. Useful when standards are not exactly respected and require a few tweaks. Function `identity` can be passed if no correction is needed.
+   * @param p Typeclass instance based on `parsing`
+   * @see [[DefaultWrites.TemporalFormatter]]
    * {{{
    * import play.api.libs.json.Java8Reads.zonedDateTimeReads
    *
@@ -447,7 +505,6 @@ trait DefaultReads {
    * }}}
    */
   def zonedDateTimeReads[T](parsing: T, corrector: String => String = identity)(implicit p: T => TemporalParser[ZonedDateTime]): Reads[ZonedDateTime] = new Reads[ZonedDateTime] {
-
     def reads(json: JsValue): JsResult[ZonedDateTime] = json match {
       case JsNumber(d) => JsSuccess(epoch(d.toLong))
       case JsString(s) => p(parsing).parse(corrector(s)) match {
@@ -460,7 +517,7 @@ trait DefaultReads {
     }
 
     @inline def epoch(millis: Long): ZonedDateTime = ZonedDateTime.ofInstant(
-      Instant.ofEpochMilli(millis), ZoneId.systemDefault)
+      Instant.ofEpochMilli(millis), ZoneOffset.UTC)
   }
 
   /**
@@ -472,15 +529,12 @@ trait DefaultReads {
 
   /**
    * Reads for the `java.time.LocalDate` type.
-   * When input value doesn't specify the time zone,
-   * then `java.time.ZoneId.systemDefault` is used.
    *
    * @tparam T Type of argument to instantiate date parser
    * @param parsing Argument to instantiate date parser. Actually either a pattern (string) or a formatter (`java.time.format.DateTimeFormatter`)
    * @param corrector a simple string transformation function that can be used to transform input String before parsing. Useful when standards are not exactly respected and require a few tweaks. Function `identity` can be passed if no correction is needed.
    * @param p Typeclass instance based on `parsing`
-   * @see [[TemporalFormatter]]
-   *
+   * @see [[DefaultWrites.TemporalFormatter]]
    * {{{
    * import play.api.libs.json.Java8Reads.localDateReads
    *
@@ -503,7 +557,7 @@ trait DefaultReads {
       }
 
       @inline def epoch(millis: Long): LocalDate = LocalDate.now(
-        Clock.fixed(Instant.ofEpochMilli(millis), ZoneId.systemDefault))
+        Clock.fixed(Instant.ofEpochMilli(millis), ZoneOffset.UTC))
     }
 
   /**
@@ -515,15 +569,12 @@ trait DefaultReads {
 
   /**
    * Reads for the `java.time.Instant` type.
-   * When input value doesn't specify the time zone,
-   * then `java.time.ZoneId.systemDefault` is used.
    *
    * @tparam T Type of argument to instantiate date parser
    * @param parsing Argument to instantiate date parser. Actually either a pattern (string) or a formatter (`java.time.format.DateTimeFormatter`)
    * @param corrector a simple string transformation function that can be used to transform input String before parsing. Useful when standards are not exactly respected and require a few tweaks. Function `identity` can be passed if no correction is needed.
    * @param p Typeclass instance based on `parsing`
-   * @see [[TemporalFormatter]]
-   *
+   * @see [[DefaultWrites.TemporalFormatter]]
    * {{{
    * import play.api.libs.json.Java8Reads.instantReads
    *
@@ -572,6 +623,7 @@ trait DefaultReads {
 
     def reads(json: JsValue): JsResult[Date] = json match {
       case JsNumber(d) => JsSuccess(new Date(d.toLong))
+
       case JsString(s) => (s match {
         case WithMillisAndTz() => millisAndTz -> parseJDate(millisAndTz, s)
         case WithMillis() => millis -> parseJDate(millis, s)
@@ -582,6 +634,8 @@ trait DefaultReads {
         case (p, None) => JsError(Seq(JsPath() ->
           Seq(ValidationError("error.expected.date.isoformat", p))))
       }
+
+      case js => JsError("error.expected.date.isoformat")
     }
   }
 
@@ -736,6 +790,9 @@ trait DefaultReads {
     }
   }
 
+  /**
+   * Deserializer for JsArray.
+   */
   implicit object JsArrayReads extends Reads[JsArray] {
     def reads(json: JsValue) = json match {
       case o: JsArray => JsSuccess(o)
@@ -750,6 +807,9 @@ trait DefaultReads {
     def reads(json: JsValue) = JsSuccess(json)
   }
 
+  /**
+   * Deserializer for JsString.
+   */
   implicit object JsStringReads extends Reads[JsString] {
     def reads(json: JsValue) = json match {
       case s: JsString => JsSuccess(s)
@@ -757,6 +817,9 @@ trait DefaultReads {
     }
   }
 
+  /**
+   * Deserializer for JsNumber.
+   */
   implicit object JsNumberReads extends Reads[JsNumber] {
     def reads(json: JsValue) = json match {
       case n: JsNumber => JsSuccess(n)
@@ -764,6 +827,9 @@ trait DefaultReads {
     }
   }
 
+  /**
+   * Deserializer for JsBoolean.
+   */
   implicit object JsBooleanReads extends Reads[JsBoolean] {
     def reads(json: JsValue) = json match {
       case b: JsBoolean => JsSuccess(b)
@@ -821,32 +887,6 @@ trait DefaultReads {
   }
 
   /**
-   * Generic deserializer for collections types.
-   */
-  implicit def traversableReads[F[_], A](implicit bf: generic.CanBuildFrom[F[_], A, F[A]], ra: Reads[A]) = new Reads[F[A]] {
-    def reads(json: JsValue) = json match {
-      case JsArray(ts) =>
-
-        type Errors = Seq[(JsPath, Seq[ValidationError])]
-        def locate(e: Errors, idx: Int) = e.map { case (p, valerr) => (JsPath(idx)) ++ p -> valerr }
-
-        ts.zipWithIndex.foldLeft(Right(Vector.empty): Either[Errors, Vector[A]]) {
-          case (acc, (elt, idx)) => (acc, fromJson[A](elt)(ra)) match {
-            case (Right(vs), JsSuccess(v, _)) => Right(vs :+ v)
-            case (Right(_), JsError(e)) => Left(locate(e, idx))
-            case (Left(e), _: JsSuccess[_]) => Left(e)
-            case (Left(e1), JsError(e2)) => Left(e1 ++ locate(e2, idx))
-          }
-        }.fold(JsError.apply, { res =>
-          val builder = bf()
-          res.foreach(builder.+=)
-          JsSuccess(builder.result())
-        })
-      case _ => JsError(Seq(JsPath() -> Seq(ValidationError("error.expected.jsarray"))))
-    }
-  }
-
-  /**
    * Deserializer for Array[T] types.
    */
   implicit def ArrayReads[T: Reads: ClassTag]: Reads[Array[T]] = new Reads[Array[T]] {
@@ -856,9 +896,10 @@ trait DefaultReads {
   /**
    * Deserializer for java.util.UUID
    */
-  def uuidReader(checkUuuidValidity: Boolean = false): Reads[java.util.UUID] = new Reads[java.util.UUID] {
+  class UUIDReader(checkUuuidValidity: Boolean) extends Reads[java.util.UUID] {
     import java.util.UUID
     import scala.util.Try
+
     def check(s: String)(u: UUID): Boolean = (u != null && s == u.toString())
     def parseUuid(s: String): Option[UUID] = {
       val uncheckedUuid = Try(UUID.fromString(s)).toOption
@@ -878,6 +919,5 @@ trait DefaultReads {
     }
   }
 
-  implicit val uuidReads: Reads[java.util.UUID] = uuidReader()
-
+  implicit val uuidReads: Reads[java.util.UUID] = new UUIDReader(false)
 }

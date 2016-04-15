@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.utils
 
@@ -8,7 +8,7 @@ import javax.inject.Inject
 import org.specs2.mutable.Specification
 import play.api.inject.Binding
 import play.api.inject.guice.GuiceInjectorBuilder
-import play.api.{ PlayException, Configuration, Environment }
+import play.api.{ PlayConfig, PlayException, Configuration, Environment }
 
 import scala.reflect.ClassTag
 
@@ -23,15 +23,15 @@ object ReflectSpec extends Specification {
       }
 
       "return the default implementation when none configured or default class doesn't exist" in {
-        doQuack(bindings("", "NoDuck")) must_== "quack"
+        doQuack(bindings(null, "NoDuck")) must_== "quack"
       }
 
       "return a default Scala implementation" in {
-        doQuack(bindings[CustomDuck]("")) must_== "custom quack"
+        doQuack(bindings[CustomDuck](null)) must_== "custom quack"
       }
 
       "return a default Java implementation" in {
-        doQuack(bindings[CustomJavaDuck]("")) must_== "java quack"
+        doQuack(bindings[CustomJavaDuck](null)) must_== "java quack"
       }
 
       "return a configured Scala implementation" in {
@@ -54,8 +54,8 @@ object ReflectSpec extends Specification {
   }
 
   def bindings(configured: String, defaultClassName: String): Seq[Binding[_]] = {
-    Reflect.bindingsFromConfiguration[Duck, JavaDuck, JavaDuckAdapter, DefaultDuck](
-      Environment.simple(), Configuration.from(Map("duck" -> configured)), "duck", defaultClassName)
+    Reflect.bindingsFromConfiguration[Duck, JavaDuck, JavaDuckAdapter, JavaDuckDelegate, DefaultDuck](
+      Environment.simple(), PlayConfig(Configuration.from(Map("duck" -> configured))), "duck", defaultClassName)
   }
 
   def bindings[Default: ClassTag](configured: String): Seq[Binding[_]] = {
@@ -86,10 +86,21 @@ object ReflectSpec extends Specification {
     def getQuack = "java quack"
   }
 
+  class JavaDuckDelegate @Inject() (delegate: Duck) extends JavaDuck {
+    def getQuack = delegate.quack
+  }
+
   class NotADuck
 
   def doQuack(bindings: Seq[Binding[_]]): String = {
-    new GuiceInjectorBuilder().bindings(bindings).injector.instanceOf[Duck].quack
+    val injector = new GuiceInjectorBuilder().bindings(bindings).injector
+    val duck = injector.instanceOf[Duck]
+    val javaDuck = injector.instanceOf[JavaDuck]
+
+    // The Java duck and the Scala duck must agree
+    javaDuck.getQuack must_== duck.quack
+
+    duck.quack
   }
 
 }

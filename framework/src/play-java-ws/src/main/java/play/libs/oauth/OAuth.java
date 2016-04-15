@@ -1,24 +1,17 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.libs.oauth;
 
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
-import java.util.List;
-import java.util.Map;
 
-import oauth.signpost.AbstractOAuthConsumer;
 import oauth.signpost.OAuthConsumer;
 import oauth.signpost.OAuthProvider;
 import oauth.signpost.basic.DefaultOAuthConsumer;
 import oauth.signpost.commonshttp.CommonsHttpOAuthProvider;
 import oauth.signpost.exception.OAuthException;
-import oauth.signpost.http.HttpRequest;
-import play.libs.ws.*;
 
-import com.google.common.base.Function;
-import com.google.common.collect.Maps;
+import org.asynchttpclient.oauth.OAuthSignatureCalculator;
+import play.libs.ws.WSSignatureCalculator;
 
 public class OAuth {
 
@@ -81,6 +74,7 @@ public class OAuth {
      * The URL where the user needs to be redirected to grant authorization to your application.
      *
      * @param token request token
+     * @return the url
      */
     public String redirectUrl(String token) {
         return oauth.signpost.OAuth.addQueryParameters(
@@ -135,99 +129,22 @@ public class OAuth {
      *
      * Example:
      * {{{
-     * WS.url("http://example.com/protected").sign(OAuthCalculator(service, tokens)).get()
+     * WS.url("http://example.com/protected").sign(OAuthCalculator(service, token)).get()
      * }}}
      */
-    public static class OAuthCalculator extends AbstractOAuthConsumer implements WSSignatureCalculator {
+    public static class OAuthCalculator implements WSSignatureCalculator {
+
+        private OAuthSignatureCalculator calculator;
 
         public OAuthCalculator(ConsumerKey consumerKey, RequestToken token) {
-            super(consumerKey.key, consumerKey.secret);
-            this.setTokenWithSecret(token.token, token.secret);
+            org.asynchttpclient.oauth.ConsumerKey ahcConsumerKey = new org.asynchttpclient.oauth.ConsumerKey(consumerKey.key, consumerKey.secret);
+            org.asynchttpclient.oauth.RequestToken ahcRequestToken = new org.asynchttpclient.oauth.RequestToken(token.token, token.secret);
+            calculator = new OAuthSignatureCalculator(ahcConsumerKey, ahcRequestToken);
         }
 
-        @Override
-        protected HttpRequest wrap(Object request) {
-            if (request instanceof WSRequest) {
-                return new WSRequestAdapter((WSRequest)request);
-            } else {
-                throw new IllegalArgumentException("OAuthCalculator expects requests of type play.libs.ws.WSRequest");
-            }
+        public OAuthSignatureCalculator getCalculator() {
+            return calculator;
         }
-
-        @Override
-        public void sign(WSRequest request) {
-            try {
-                sign(wrap(request));
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-    }
-
-    public static class WSRequestAdapter implements HttpRequest {
-
-        private WSRequest request;
-
-        public WSRequestAdapter(WSRequest request) {
-            this.request = request;
-        }
-
-        @Override
-        public Object unwrap() {
-            return request;
-        }
-
-        @Override
-        public Map<String, String> getAllHeaders() {
-            return Maps.transformValues(request.getAllHeaders(), new Function<List<String>, String>(){
-                @Override public String apply(List<String> values) {
-                    if (values.size() == 0) return "";
-                    return values.get(values.size() - 1);
-                }});
-        }
-
-        @Override
-        public String getHeader(String name) {
-            List<String> values = request.getHeader(name);
-            if (values.size() == 0) return "";
-            return values.get(values.size() - 1);
-        }
-
-        @Override
-        public String getContentType() {
-            return getHeader("Content-Type");
-        }
-
-        @Override
-        public InputStream getMessagePayload() {
-            byte[] body = request.getBody();
-            if (body == null) {
-                body = new byte[0];
-            }
-            return new ByteArrayInputStream(body);
-        }
-
-        @Override
-        public String getMethod() {
-            return request.getMethod();
-        }
-
-        @Override
-        public void setHeader(String name, String value) {
-            request.setHeader(name, value);
-        }
-
-        @Override
-        public String getRequestUrl() {
-            return request.getUrl();
-        }
-
-        @Override
-        public void setRequestUrl(String url) {
-            request.setUrl(url);
-        }
-
     }
 
 }

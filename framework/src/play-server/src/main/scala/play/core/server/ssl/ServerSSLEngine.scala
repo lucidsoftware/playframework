@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.core.server.ssl
 
@@ -59,7 +59,7 @@ object ServerSSLEngine {
 
     def javaAppProvider = {
       val javaApplication = applicationProvider.get.map(a => a.injector.instanceOf[play.Application]).getOrElse(null)
-      new play.server.ApplicationProvider(javaApplication, applicationProvider.path)
+      new play.server.ApplicationProvider(javaApplication)
     }
 
     if (serverConfigProviderArgsConstructor != null) {

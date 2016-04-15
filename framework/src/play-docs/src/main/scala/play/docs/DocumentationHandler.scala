@@ -1,24 +1,26 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.docs
 
+import java.io.Closeable
+
+import akka.stream.scaladsl.StreamConverters
+import play.api.libs.MimeTypes
 import play.api.mvc._
-import play.api.http.Status
-import play.api.http.HeaderNames
-import play.api.libs.iteratee.Enumerator
-import play.api.libs.iteratee.Enumeratee
+import play.api.http.{ ContentTypes, HttpEntity }
 import play.core.{ PlayVersion, BuildDocHandler }
 import play.doc.{ FileRepository, PlayDoc, RenderedPage, PageIndex }
-import org.apache.commons.io.IOUtils
 
 /**
  * Used by the DocumentationApplication class to handle requests for Play documentation.
  * Documentation is located in the given repository - either a JAR file or directly from
  * the filesystem.
  */
-class DocumentationHandler(repo: FileRepository, apiRepo: FileRepository) extends BuildDocHandler {
+class DocumentationHandler(repo: FileRepository, apiRepo: FileRepository, toClose: Closeable) extends BuildDocHandler with Closeable {
 
+  def this(repo: FileRepository, toClose: Closeable) = this(repo, repo, toClose)
+  def this(repo: FileRepository, apiRepo: FileRepository) = this(repo, apiRepo, new Closeable() { def close() = () })
   def this(repo: FileRepository) = this(repo, repo)
 
   /**
@@ -45,15 +47,12 @@ class DocumentationHandler(repo: FileRepository, apiRepo: FileRepository) extend
 
     // Assumes caller consumes result, closing entry
     def sendFileInline(repo: FileRepository, path: String): Option[Result] = {
-      import play.api.libs.concurrent.Execution.Implicits.defaultContext
       repo.handleFile(path) { handle =>
-        Result(
-          ResponseHeader(Status.OK, Map(
-            HeaderNames.CONTENT_LENGTH -> handle.size.toString,
-            HeaderNames.CONTENT_TYPE -> play.api.libs.MimeTypes.forFileName(handle.name).getOrElse(play.api.http.ContentTypes.BINARY)
-          )),
-          Enumerator.fromStream(handle.is) &> Enumeratee.onIterateeDone(handle.close)
-        )
+        Results.Ok.sendEntity(HttpEntity.Streamed(
+          StreamConverters.fromInputStream(() => handle.is).mapMaterializedValue(_ => handle.close),
+          Some(handle.size),
+          MimeTypes.forFileName(handle.name).orElse(Some(ContentTypes.BINARY))
+        ))
       }
     }
 
@@ -85,6 +84,8 @@ class DocumentationHandler(repo: FileRepository, apiRepo: FileRepository) extend
       case _ => None
     }
   }
+
+  def close() = toClose.close()
 }
 
 /**

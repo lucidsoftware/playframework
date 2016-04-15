@@ -1,13 +1,14 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.test
 
-import play.api.test._
+import akka.actor.ActorSystem
+import akka.stream.ActorMaterializer
+import akka.stream.scaladsl.Source
+import akka.util.ByteString
 import play.api.test.Helpers._
-import play.api.mvc._
 import play.api.mvc.Results._
-import play.api.libs.iteratee.Enumerator
 import play.twirl.api.Content
 import scala.concurrent.Future
 
@@ -53,11 +54,17 @@ class HelpersSpec extends Specification {
   "contentAsBytes" should {
 
     "extract the content from Result as Bytes" in {
-      contentAsBytes(Future.successful(Ok("abc"))) must_== Array(97, 98, 99)
+      contentAsBytes(Future.successful(Ok("abc"))) must_== ByteString(97, 98, 99)
     }
 
     "extract the content from chunked Result as Bytes" in {
-      contentAsBytes(Future.successful(Ok.chunked(Enumerator("a", "b", "c")))) must_== Array(97, 98, 99)
+      implicit val system = ActorSystem()
+      try {
+        implicit val mat = ActorMaterializer()
+        contentAsBytes(Future.successful(Ok.chunked(Source(List("a", "b", "c"))))) must_== ByteString(97, 98, 99)
+      } finally {
+        system.terminate()
+      }
     }
 
     "extract the content from Content as Bytes" in {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.core
 
@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import play.api._
 import play.api.inject._
 import play.libs.Json
-import play.api.libs.json.JacksonJson
 
 import javax.inject._
 
@@ -29,7 +28,7 @@ class ObjectMapperModule extends Module {
 @Singleton
 class ObjectMapperProvider @Inject() (lifecycle: ApplicationLifecycle) extends Provider[ObjectMapper] {
   lazy val get = {
-    val objectMapper = JacksonJson.createMapper()
+    val objectMapper = Json.newDefaultMapper()
     Json.setObjectMapper(objectMapper)
     lifecycle.addStopHook { () =>
       Future.successful(Json.setObjectMapper(null))

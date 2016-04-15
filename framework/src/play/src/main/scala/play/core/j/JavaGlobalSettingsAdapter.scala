@@ -1,17 +1,16 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.core.j
 
 import play.api._
+import play.api.libs.streams.Accumulator
 import play.api.mvc._
-import java.io.File
 import scala.concurrent.Future
-import play.api.libs.iteratee._
 import scala.util.control.NonFatal
 
 /** Adapter that holds the Java `GlobalSettings` and acts as a Scala `GlobalSettings` for the framework. */
-class JavaGlobalSettingsAdapter(val underlying: play.GlobalSettings) extends GlobalSettings {
+class JavaGlobalSettingsAdapter(val underlying: play.GlobalSettings) extends GlobalSettings.Deprecated {
   require(underlying != null, "underlying cannot be null")
 
   override def beforeStart(app: Application) {
@@ -46,19 +45,12 @@ class JavaGlobalSettingsAdapter(val underlying: play.GlobalSettings) extends Glo
       .getOrElse(super.onBadRequest(request, error))
   }
 
-  override def onLoadConfig(config: Configuration, path: File, classloader: ClassLoader, mode: Mode.Mode) = {
-    import JavaModeConverter.asJavaMode
-    Option(underlying.onLoadConfig(new play.Configuration(config), path, classloader, mode))
-      .map(_.getWrappedConfiguration).getOrElse(super.onLoadConfig(config, path, classloader, mode))
-  }
-
   override def doFilter(a: EssentialAction): EssentialAction = {
     try {
       Filters(super.doFilter(a), underlying.filters.map(_.newInstance: play.api.mvc.EssentialFilter): _*)
     } catch {
       case NonFatal(e) => {
-        import play.api.libs.iteratee.Execution.Implicits.trampoline
-        EssentialAction(req => Iteratee.flatten(onError(req, e).map(result => Done(result, Input.Empty))))
+        EssentialAction(req => Accumulator.done(onError(req, e)))
       }
     }
   }

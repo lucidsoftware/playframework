@@ -1,10 +1,11 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package scalaguide.forms.csrf
 
+import play.api.Application
+
 import play.api.test._
-import play.api.libs.iteratee.{Iteratee, Enumerator}
 import play.api.libs.Crypto
 import play.api.mvc.Call
 import scala.concurrent.ExecutionContext.Implicits._
@@ -12,84 +13,109 @@ import scala.concurrent.Future
 
 object ScalaCsrf extends PlaySpecification {
 
+  //#csrf-controller
+  import play.api.mvc._
+  import play.api.mvc.Results._
+  import play.filters.csrf._
+  import play.filters.csrf.CSRF.Token
+
+  class CSRFController(addToken: CSRFAddToken, checkToken: CSRFCheck) extends Controller {
+    def getToken = addToken(Action { implicit request =>
+      val Token(name, value) = CSRF.getToken.get
+      Ok(s"$name=$value")
+    })
+  }
+  //#csrf-controller
+
+  // used to make sure CSRFController gets the proper things injected
+  implicit def addToken[A](action: Action[A])(implicit app: Application): Action[A] = app.injector.instanceOf(classOf[CSRFAddToken])(action)
+  implicit def checkToken[A](action: Action[A])(implicit app: Application): Action[A] = app.injector.instanceOf(classOf[CSRFCheck])(action)
+
   "Play's CSRF protection" should {
-    "allow global configuration" in withApplication {
-      //#global
-      import play.api._
-      import play.api.mvc._
-      import play.filters.csrf._
+    "allow global configuration" in new WithApplication() {
+      //#http-filters
+      import play.api.http.HttpFilters
+      import play.filters.csrf.CSRFFilter
+      import javax.inject.Inject
 
-      object Global extends WithFilters(CSRFFilter()) with GlobalSettings {
-        // ... onStart, onStop etc
+      class Filters @Inject() (csrfFilter: CSRFFilter) extends HttpFilters {
+        def filters = Seq(csrfFilter)
       }
-      //#global
-
-      await(Enumerator("foo=bar".getBytes("US-ASCII")) |>>> Global.doFilter(Action(Results.Ok))(FakeRequest("POST", "/")
-        .withHeaders(CONTENT_TYPE -> "application/x-www-form-urlencoded"))).header.status must_== FORBIDDEN
+      //#http-filters
+      ok
     }
 
-    "allow getting the token" in withApplication {
+    "allow getting the token" in new WithApplication() {
       val originalToken = Crypto.generateSignedToken
-      val request = FakeRequest().withSession("csrfToken" -> originalToken)
-      //#get-token
-      import play.filters.csrf.CSRF
-
-      val token = CSRF.getToken(request)
-      //#get-token
-      token must beSome.like {
-        case t => Crypto.compareSignedTokens(originalToken, t.value) must_== true
+      val addAndGetToken = addToken(Action { implicit request =>
+        //#get-token
+        val token: Option[CSRF.Token] = CSRF.getToken
+        //#get-token
+        Ok(token.map(_.value).getOrElse(""))
+      })
+      val result = addAndGetToken(FakeRequest().withSession("csrfToken" -> originalToken))
+      contentAsString(result) must be like {
+        case t => Crypto.compareSignedTokens(originalToken, t) must_== true
       }
     }
 
-    "allow rendering a token in a query string" in withApplication {
-      val token = Crypto.generateSignedToken
-      val body = scalaguide.forms.html.csrf(FakeRequest().withSession("csrfToken" -> token)).body
-      body must find("action=\"/items\\?csrfToken=[a-f0-9]+-\\d+-([a-f0-9]+)\"").withGroup(Crypto.extractSignedToken(token).get)
+    def tokenFormAction(implicit app: Application) = addToken(Action { implicit request =>
+      Ok(scalaguide.forms.html.csrf())
+    }) 
+
+    "allow rendering a token in a query string" in new WithApplication() {
+      val originalToken = Crypto.generateSignedToken
+      val result = tokenFormAction(app)(FakeRequest().withSession("csrfToken" -> originalToken))
+      val body = contentAsString(result)
+      body must find("action=\"/items\\?csrfToken=[a-f0-9]+-\\d+-([a-f0-9]+)\"").withGroup(Crypto.extractSignedToken(originalToken).get)
     }
 
-    "allow rendering a token in a hidden field" in withApplication {
-      val token = Crypto.generateSignedToken
-      val body = scalaguide.forms.html.csrf(FakeRequest().withSession("csrfToken" -> token)).body
-      body must find("value=\"[a-f0-9]+-\\d+-([a-f0-9]+)\"").withGroup(Crypto.extractSignedToken(token).get)
+    "allow rendering a token in a hidden field" in new WithApplication() {
+      val originalToken = Crypto.generateSignedToken
+      val result = tokenFormAction(app)(FakeRequest().withSession("csrfToken" -> originalToken))
+      val body = contentAsString(result)
+      body must find("value=\"[a-f0-9]+-\\d+-([a-f0-9]+)\"").withGroup(Crypto.extractSignedToken(originalToken).get)
     }
 
-    "allow per action checking" in withApplication {
+    "allow per action checking" in new WithApplication() {
       import play.api.mvc.Results.Ok
       //#csrf-check
       import play.api.mvc._
       import play.filters.csrf._
 
-      def save = CSRFCheck {
-        Action { req =>
+      def save = checkToken {
+        Action { req: RequestHeader =>
           // handle body
           Ok
         }
       }
       //#csrf-check
 
-      await(save(FakeRequest("POST", "/").withHeaders(CONTENT_TYPE -> "application/x-www-form-urlencoded")))
+      await(save(FakeRequest("POST", "/").withCookies(Cookie("foo", "bar"))
+        .withHeaders(CONTENT_TYPE -> "application/x-www-form-urlencoded")))
         .header.status must_== FORBIDDEN
     }
 
-    "allow per action token handling" in withApplication {
+    "allow per action token handling" in new WithApplication() {
       import play.api.mvc.Results.Ok
 
       //#csrf-add-token
+
       import play.api.mvc._
       import play.filters.csrf._
 
-      def form = CSRFAddToken {
-        Action { implicit req =>
-          Ok(views.html.itemsForm())
+      def form = addToken {
+        Action { implicit req: RequestHeader =>
+          Ok(views.html.itemsForm)
         }
       }
       //#csrf-add-token
 
-      val body = await(form(FakeRequest("GET", "/")).flatMap(_.body |>>> Iteratee.consume[Array[Byte]]()))
-      Crypto.extractSignedToken(new String(body, "UTF-8")) must beSome
+      val body = await(form(FakeRequest("GET", "/")).flatMap(_.body.consumeData))
+      Crypto.extractSignedToken(body.utf8String) must beSome
     }
 
-    "be easy to use with an action builder" in withApplication {
+    "be easy to use with an action builder" in new WithApplication() {
       import play.api.mvc.Results.Ok
 
       //#csrf-action-builder
@@ -101,7 +127,7 @@ object ScalaCsrf extends PlaySpecification {
           // authentication code here
           block(request)
         }
-        override def composeAction[A](action: Action[A]) = CSRFCheck(action)
+        override def composeAction[A](action: Action[A]) = checkToken(action)
       }
 
       object GetAction extends ActionBuilder[Request] {
@@ -109,7 +135,7 @@ object ScalaCsrf extends PlaySpecification {
           // authentication code here
           block(request)
         }
-        override def composeAction[A](action: Action[A]) = CSRFAddToken(action)
+        override def composeAction[A](action: Action[A]) = addToken(action)
       }
       //#csrf-action-builder
 
@@ -120,30 +146,24 @@ object ScalaCsrf extends PlaySpecification {
       }
 
       def form = GetAction { implicit req =>
-        Ok(views.html.itemsForm())
+        Ok(views.html.itemsForm)
       }
       //#csrf-actions
 
-      await(save(FakeRequest("POST", "/").withHeaders(CONTENT_TYPE -> "application/x-www-form-urlencoded")))
+      await(save(FakeRequest("POST", "/").withCookies(Cookie("foo", "bar"))
+        .withHeaders(CONTENT_TYPE -> "application/x-www-form-urlencoded")))
         .header.status must_== FORBIDDEN
-      val body = await(form(FakeRequest("GET", "/")).flatMap(_.body |>>> Iteratee.consume[Array[Byte]]()))
-        Crypto.extractSignedToken(new String(body, "UTF-8")) must beSome
+      val body = await(form(FakeRequest("GET", "/")).flatMap(_.body.consumeData))
+      Crypto.extractSignedToken(body.utf8String) must beSome
     }
-
 
   }
 
   object views {
     object html {
-      def itemsForm()(implicit req: play.api.mvc.RequestHeader) =
-        play.filters.csrf.CSRF.getToken(req).map(_.value).getOrElse("no token")
+      def itemsForm(implicit req: play.api.mvc.RequestHeader) =
+        CSRF.getToken.map(_.value).getOrElse("no token")
     }
-  }
-
-  def withApplication[T](block: => T) = running(FakeApplication(
-    additionalConfiguration = Map("application.secret" -> "foobar")
-  )) {
-    block
   }
 
 }

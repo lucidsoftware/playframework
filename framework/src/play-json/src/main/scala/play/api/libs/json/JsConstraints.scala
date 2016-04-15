@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs.json
 
@@ -117,10 +117,10 @@ trait ConstraintReads {
     filterNot[N](ValidationError("error.max", m))(num.gt(_, m))(reads)
 
   def filterNot[A](error: ValidationError)(p: A => Boolean)(implicit reads: Reads[A]) =
-    Reads[A](js => reads.reads(js).filterNot(error)(p))
+    Reads[A](js => reads.reads(js).filterNot(JsError(error))(p))
 
   def filter[A](otherwise: ValidationError)(p: A => Boolean)(implicit reads: Reads[A]) =
-    Reads[A](js => reads.reads(js).filter(otherwise)(p))
+    Reads[A](js => reads.reads(js).filter(JsError(otherwise))(p))
 
   def minLength[M](m: Int)(implicit reads: Reads[M], p: M => scala.collection.TraversableLike[_, M]) =
     filterNot[M](ValidationError("error.minLength", m))(_.size < m)
@@ -137,7 +137,7 @@ trait ConstraintReads {
     })
 
   def email(implicit reads: Reads[String]): Reads[String] =
-    pattern("""\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}\b""".r, "error.email")
+    pattern("""^[a-zA-Z0-9\.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$""".r, "error.email")
 
   def verifying[A](cond: A => Boolean)(implicit rds: Reads[A]) =
     filter[A](ValidationError("error.invalid"))(cond)(rds)
@@ -204,7 +204,7 @@ trait ConstraintWrites {
     Writes[JsValue] { js => wrs.writes(fixed) }
 
   def pruned[A](implicit w: Writes[A]): Writes[A] = new Writes[A] {
-    def writes(a: A): JsValue = JsUndefined("pruned")
+    def writes(a: A): JsValue = JsNull
   }
 
   def list[A](implicit writes: Writes[A]): Writes[List[A]] = Writes.traversableWrites[A]
@@ -214,7 +214,7 @@ trait ConstraintWrites {
 
   /**
    * Pure Option Writer[T] which writes "null" when None which is different
-   * from `JsPath.writeNullable which omits the field when None
+   * from `JsPath.writeNullable` which omits the field when None
    */
   def optionWithNull[A](implicit wa: Writes[A]) = Writes[Option[A]] { a =>
     a match {

@@ -1,3 +1,6 @@
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
 package play.mvc;
 
 import java.util.ArrayList;
@@ -17,9 +20,27 @@ import static org.junit.Assert.assertEquals;
 public final class CallTest {
 
     @Test
+    public void testHttpURL1() throws Throwable {
+        final TestCall call = new TestCall("/myurl", "GET");
+
+        assertEquals("Call should return correct url in path()",
+                     "/myurl",
+                     call.path());
+    }
+
+    @Test
+    public void testHttpURL2() throws Throwable {
+        final Call call = new TestCall("/myurl", "GET").withFragment("myfragment");
+
+        assertEquals("Call should return correct url and fragment in path()",
+                     "/myurl#myfragment",
+                     call.path());
+    }
+
+    @Test
     public void testHttpAbsoluteURL1() throws Throwable {
         final Request req = new RequestBuilder()
-            .url("http://playframework.com/playframework").build();
+            .uri("http://playframework.com/playframework").build();
 
         final TestCall call = new TestCall("/url", "GET");
 
@@ -31,7 +52,7 @@ public final class CallTest {
     @Test
     public void testHttpAbsoluteURL2() throws Throwable {
         final Request req = new RequestBuilder()
-            .url("https://playframework.com/playframework").build();
+            .uri("https://playframework.com/playframework").build();
 
         final TestCall call = new TestCall("/url", "GET");
 
@@ -52,7 +73,7 @@ public final class CallTest {
     @Test
     public void testHttpsAbsoluteURL1() throws Throwable {
         final Request req = new RequestBuilder()
-            .url("https://playframework.com/playframework").build();
+            .uri("https://playframework.com/playframework").build();
 
         final TestCall call = new TestCall("/url", "GET");
 
@@ -64,7 +85,7 @@ public final class CallTest {
     @Test
     public void testHttpsAbsoluteURL2() throws Throwable {
         final Request req = new RequestBuilder()
-            .url("http://playframework.com/playframework").build();
+            .uri("http://playframework.com/playframework").build();
 
         final TestCall call = new TestCall("/url", "GET");
 
@@ -85,7 +106,7 @@ public final class CallTest {
     @Test
     public void testWebSocketURL1() throws Throwable {
         final Request req = new RequestBuilder()
-            .url("http://playframework.com/playframework").build();
+            .uri("http://playframework.com/playframework").build();
 
         final TestCall call = new TestCall("/url", "GET");
 
@@ -97,7 +118,7 @@ public final class CallTest {
     @Test
     public void testWebSocketURL2() throws Throwable {
         final Request req = new RequestBuilder()
-            .url("https://playframework.com/playframework").build();
+            .uri("https://playframework.com/playframework").build();
 
         final TestCall call = new TestCall("/url", "GET");
 
@@ -118,7 +139,7 @@ public final class CallTest {
     @Test
     public void testSecureWebSocketURL1() throws Throwable {
         final Request req = new RequestBuilder()
-            .url("https://playframework.com/playframework").build();
+            .uri("https://playframework.com/playframework").build();
 
         final TestCall call = new TestCall("/url", "GET");
 
@@ -130,7 +151,7 @@ public final class CallTest {
     @Test
     public void testSecureWebSocketURL2() throws Throwable {
         final Request req = new RequestBuilder()
-            .url("http://playframework.com/playframework").build();
+            .uri("http://playframework.com/playframework").build();
 
         final TestCall call = new TestCall("/url", "GET");
 
@@ -153,12 +174,15 @@ public final class CallTest {
 final class TestCall extends Call {
     private final String u;
     private final String m;
+    private final String f;
 
     TestCall(String u, String m) {
         this.u = u;
         this.m = m;
+        this.f = null;
     }
 
     public String url() { return this.u; }
     public String method() { return this.m; }
+    public String fragment() { return this.f; }
 }

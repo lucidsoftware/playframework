@@ -1,13 +1,13 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.cache
 
 import javax.inject.Inject
 import play.api._
+import play.api.libs.streams.Accumulator
 import play.api.mvc._
 import play.api.libs.Codecs
-import play.api.libs.iteratee.{ Iteratee, Done }
 import play.api.http.HeaderNames.{ IF_NONE_MATCH, ETAG, EXPIRES }
 import play.api.mvc.Results.NotModified
 
@@ -97,6 +97,7 @@ object Cached {
    * @param key Compute a key from the request header
    * @param caching Compute a cache duration from the respone header
    */
+  @deprecated("Inject Cached into your component", "2.5.0")
   def apply(
     key: RequestHeader => String,
     caching: PartialFunction[ResponseHeader, Duration]): UnboundCachedBuilder = new UnboundCachedBuilder(key, caching)
@@ -106,6 +107,7 @@ object Cached {
    *
    * @param key Compute a key from the request header
    */
+  @deprecated("Inject Cached into your component", "2.5.0")
   def apply(key: RequestHeader => String): UnboundCachedBuilder = {
     apply(key, duration = 0)
   }
@@ -115,6 +117,7 @@ object Cached {
    *
    * @param key Cache key
    */
+  @deprecated("Inject Cached into your component", "2.5.0")
   def apply(key: String): UnboundCachedBuilder = {
     apply(_ => key, duration = 0)
   }
@@ -125,6 +128,7 @@ object Cached {
    * @param key Cache key
    * @param duration Cache duration (in seconds)
    */
+  @deprecated("Inject Cached into your component", "2.5.0")
   def apply(key: RequestHeader => String, duration: Int): UnboundCachedBuilder = {
     new UnboundCachedBuilder(key, { case (_: ResponseHeader) => Duration(duration, SECONDS) })
   }
@@ -133,26 +137,31 @@ object Cached {
    * A cached instance caching nothing
    * Useful for composition
    */
+  @deprecated("Inject Cached into your component", "2.5.0")
   def empty(key: RequestHeader => String): UnboundCachedBuilder = new UnboundCachedBuilder(key, PartialFunction.empty)
 
   /**
    * Caches everything, forever
    */
+  @deprecated("Inject Cached into your component", "2.5.0")
   def everything(key: RequestHeader => String): UnboundCachedBuilder = empty(key).default(0)
 
   /**
    * Caches everything for the specified seconds
    */
+  @deprecated("Inject Cached into your component", "2.5.0")
   def everything(key: RequestHeader => String, duration: Int): UnboundCachedBuilder = empty(key).default(duration)
 
   /**
    * Caches the specified status, for the specified number of seconds
    */
+  @deprecated("Inject Cached into your component", "2.5.0")
   def status(key: RequestHeader => String, status: Int, duration: Int): UnboundCachedBuilder = empty(key).includeStatus(status, Duration(duration, SECONDS))
 
   /**
    * Caches the specified status forever
    */
+  @deprecated("Inject Cached into your component", "2.5.0")
   def status(key: RequestHeader => String, status: Int): UnboundCachedBuilder = empty(key).includeStatus(status)
 }
 
@@ -190,19 +199,19 @@ final class CachedBuilder(
       requestEtag <- request.headers.get(IF_NONE_MATCH)
       etag <- cache.get[String](etagKey)
       if requestEtag == "*" || etag == requestEtag
-    } yield Done[Array[Byte], Result](NotModified)
+    } yield Accumulator.done(NotModified)
 
     notModified.orElse {
       // Otherwise try to serve the resource from the cache, if it has not yet expired
       cache.get[SerializableResult](resultKey).map { sr: SerializableResult =>
-        Done[Array[Byte], Result](sr.result)
+        Accumulator.done(sr.result)
       }
     }.getOrElse {
       // The resource was not in the cache, we have to run the underlying action
-      val iterateeResult = action(request)
+      val accumulatorResult = action(request)
 
       // Add cache information to the response, so clients can cache its content
-      iterateeResult.map(handleResult(_, etagKey, resultKey))
+      accumulatorResult.map(handleResult(_, etagKey, resultKey))
     }
   }
 
@@ -306,6 +315,7 @@ final class CachedBuilder(
  * @param key Compute a key from the request header
  * @param caching A callback to get the number of seconds to cache results for
  */
+@deprecated("Use CachedBuilder instead", "2.5.0")
 class UnboundCachedBuilder(key: RequestHeader => String, caching: PartialFunction[ResponseHeader, Duration]) {
   import Cached._
 

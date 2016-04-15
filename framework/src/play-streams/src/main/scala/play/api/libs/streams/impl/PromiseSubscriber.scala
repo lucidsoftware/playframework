@@ -1,17 +1,15 @@
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
 package play.api.libs.streams.impl
 
 import org.reactivestreams._
 import play.api.libs.concurrent.StateMachine
-import play.api.libs.iteratee.Execution
-import scala.annotation.tailrec
-import scala.concurrent.{ ExecutionContext, Promise }
-import scala.util.{ Failure, Success, Try }
+import scala.concurrent.Promise
 
 private[streams] object PromiseSubscriber {
   /**
    * Internal state of the Subscriber.
-   *
-   * @tparam The type of the element.
    */
   sealed trait State
   /**

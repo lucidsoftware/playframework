@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.http
 
@@ -10,10 +10,13 @@ import play.api.inject.Binding
 import play.api.mvc.Results._
 import play.api.mvc._
 import play.api.http.Status._
+import play.api.routing.Router
 import play.core.j.JavaHttpErrorHandlerAdapter
-import play.core.{ SourceMapper, Router }
+import play.core.SourceMapper
+import play.mvc.Http
 import play.utils.{ Reflect, PlayIO }
 
+import scala.compat.java8.FutureConverters
 import scala.concurrent._
 import scala.util.control.NonFatal
 
@@ -48,15 +51,17 @@ object HttpErrorHandler {
    * Get the bindings for the error handler from the configuration
    */
   def bindingsFromConfiguration(environment: Environment, configuration: Configuration): Seq[Binding[_]] = {
-    Reflect.bindingsFromConfiguration[HttpErrorHandler, play.http.HttpErrorHandler, JavaHttpErrorHandlerAdapter, GlobalSettingsHttpErrorHandler](environment, configuration, "play.http.errorHandler", "ErrorHandler")
+    Reflect.bindingsFromConfiguration[HttpErrorHandler, play.http.HttpErrorHandler, JavaHttpErrorHandlerAdapter, JavaHttpErrorHandlerDelegate, GlobalSettingsHttpErrorHandler](environment, PlayConfig(configuration),
+      "play.http.errorHandler", "ErrorHandler")
   }
 }
 
 /**
  * HTTP error handler that delegates to legacy GlobalSettings methods.
  *
- * This is the default error handler, and ensures that applications that provide custom onHandlerNotFound, onBadRequest,
- * and onError implementations on GlobalSettings still work.
+ * This is an internal error handler that ensures that applications that provide custom onHandlerNotFound, onBadRequest,
+ * and onError implementations on GlobalSettings still work.  It is package private to Play, and is only referenced from the
+ * HttpErrorHandler.bindingsFromConfiguration method as the default.  It should go away when GlobalSettings is removed.
  *
  * The dependency on GlobalSettings is wrapped in a Provider to avoid a circular dependency, since other methods on
  * GlobalSettings also require invoking this.
@@ -99,7 +104,7 @@ private[play] class GlobalSettingsHttpErrorHandler @Inject() (global: Provider[G
  * This class is intended to be extended, allowing users to reuse some of the functionality provided here.
  *
  * @param environment The environment
- * @param routes An optional router.
+ * @param router An optional router.
  *               If provided, in dev mode, will be used to display more debug information when a handler can't be found.
  *               This is a lazy parameter, to avoid circular dependency issues, since the router may well depend on
  *               this.
@@ -107,14 +112,25 @@ private[play] class GlobalSettingsHttpErrorHandler @Inject() (global: Provider[G
 @Singleton
 class DefaultHttpErrorHandler(environment: Environment, configuration: Configuration,
     sourceMapper: Option[SourceMapper] = None,
-    routes: => Option[Router.Routes] = None) extends HttpErrorHandler {
+    router: => Option[Router] = None) extends HttpErrorHandler {
 
   @Inject
   def this(environment: Environment, configuration: Configuration, sourceMapper: OptionalSourceMapper,
-    routes: Provider[Router.Routes]) =
-    this(environment, configuration, sourceMapper.sourceMapper, Some(routes.get))
+    router: Provider[Router]) =
+    this(environment, configuration, sourceMapper.sourceMapper, Some(router.get))
 
-  private val playEditor = configuration.getString("play.editor")
+  // Hyperlink string to wrap around Play error messages.
+  private var playEditor: Option[String] = configuration.getString("play.editor")
+
+  /**
+   * Sets the play editor to the given string after initialization.  Used for
+   * tests, or cases where the existing configuration isn't sufficient.
+   *
+   * @param editor the play editor string.
+   */
+  def setPlayEditor(editor: String): Unit = {
+    playEditor = Option(editor)
+  }
 
   /**
    * Invoked when a client error occurs, that is, an error in the 4xx series.
@@ -127,8 +143,7 @@ class DefaultHttpErrorHandler(environment: Environment, configuration: Configura
     case BAD_REQUEST => onBadRequest(request, message)
     case FORBIDDEN => onForbidden(request, message)
     case NOT_FOUND => onNotFound(request, message)
-    case clientError if statusCode >= 400 && statusCode < 500 =>
-      Future.successful(Results.Status(clientError)(views.html.defaultpages.badRequest(request.method, request.uri, message)))
+    case clientError if statusCode >= 400 && statusCode < 500 => onOtherClientError(request, statusCode, message)
     case nonClientError =>
       throw new IllegalArgumentException(s"onClientError invoked with non client error status code $statusCode: $message")
   }
@@ -160,16 +175,28 @@ class DefaultHttpErrorHandler(environment: Environment, configuration: Configura
   protected def onNotFound(request: RequestHeader, message: String): Future[Result] = {
     Future.successful(NotFound(environment.mode match {
       case Mode.Prod => views.html.defaultpages.notFound(request.method, request.uri)
-      case _ => views.html.defaultpages.devNotFound(request.method, request.uri, routes)
+      case _ => views.html.defaultpages.devNotFound(request.method, request.uri, router)
     }))
+  }
+
+  /**
+   * Invoked when a client error occurs, that is, an error in the 4xx series, which is not handled by any of
+   * the other methods in this class already.
+   *
+   * @param request The request that caused the client error.
+   * @param statusCode The error status code.  Must be greater or equal to 400, and less than 500.
+   * @param message The error message.
+   */
+  protected def onOtherClientError(request: RequestHeader, statusCode: Int, message: String): Future[Result] = {
+    Future.successful(Results.Status(statusCode)(views.html.defaultpages.badRequest(request.method, request.uri, message)))
   }
 
   /**
    * Invoked when a server error occurs.
    *
-   * By default, the implementation of this method delegates to [[onProdServerError()]] when in prod mode, and
-   * [[onDevServerError()]] in dev mode.  It is recommended, if you want Play's debug info on the error page in dev
-   * mode, that you override [[onProdServerError()]] instead of this method.
+   * By default, the implementation of this method delegates to [[onProdServerError]] when in prod mode, and
+   * [[onDevServerError]] in dev mode.  It is recommended, if you want Play's debug info on the error page in dev
+   * mode, that you override [[onProdServerError]] instead of this method.
    *
    * @param request The request that triggered the server error.
    * @param exception The server error.
@@ -221,7 +248,7 @@ class DefaultHttpErrorHandler(environment: Environment, configuration: Configura
   /**
    * Invoked in prod mode when a server error occurs.
    *
-   * Override this rather than [[onServerError()]] if you don't want to change Play's debug output when logging errors
+   * Override this rather than [[onServerError]] if you don't want to change Play's debug output when logging errors
    * in dev mode.
    *
    * @param request The request that triggered the error.
@@ -265,18 +292,34 @@ object HttpErrorHandlerExceptions {
 /**
  * A default HTTP error handler that can be used when there's no application available
  */
-object DefaultHttpErrorHandler extends DefaultHttpErrorHandler(Environment.simple(), Configuration.empty, None, None)
+object DefaultHttpErrorHandler extends DefaultHttpErrorHandler(Environment.simple(), Configuration.load(Environment.simple()), None, None) {
+
+}
 
 /**
  * A lazy HTTP error handler, that looks up the error handler from the current application
  */
 object LazyHttpErrorHandler extends HttpErrorHandler {
 
-  private def errorHandler = Play.maybeApplication.fold[HttpErrorHandler](DefaultHttpErrorHandler)(_.errorHandler)
+  private def errorHandler = Play.privateMaybeApplication.fold[HttpErrorHandler](DefaultHttpErrorHandler)(_.errorHandler)
 
   def onClientError(request: RequestHeader, statusCode: Int, message: String) =
     errorHandler.onClientError(request, statusCode, message)
 
   def onServerError(request: RequestHeader, exception: Throwable) =
     errorHandler.onServerError(request, exception)
+}
+
+/**
+ * A Java error handler that's provided when a Scala one is configured, so that Java code can still have the error
+ * handler injected.
+ */
+private[play] class JavaHttpErrorHandlerDelegate @Inject() (delegate: HttpErrorHandler) extends play.http.HttpErrorHandler {
+  import play.api.libs.iteratee.Execution.Implicits.trampoline
+
+  def onClientError(request: Http.RequestHeader, statusCode: Int, message: String) =
+    FutureConverters.toJava(delegate.onClientError(request._underlyingHeader(), statusCode, message).map(_.asJava))
+
+  def onServerError(request: Http.RequestHeader, exception: Throwable) =
+    FutureConverters.toJava(delegate.onServerError(request._underlyingHeader(), exception).map(_.asJava))
 }

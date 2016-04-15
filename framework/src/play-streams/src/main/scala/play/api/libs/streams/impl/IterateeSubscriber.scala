@@ -1,17 +1,19 @@
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
 package play.api.libs.streams.impl
 
 import org.reactivestreams._
 import play.api.libs.concurrent.StateMachine
 import play.api.libs.iteratee._
-import scala.concurrent.{ ExecutionContext, Future, Promise }
-import scala.util.{ Failure, Success, Try }
+import scala.concurrent.Promise
 
 private[streams] object IterateeSubscriber {
   /**
    * Internal state of the Subscriber.
    *
-   * @tparam The type of elements.
-   * @tparam The result type of the Iteratee.
+   * @tparam T type of elements.
+   * @tparam R The result type of the Iteratee.
    */
   sealed trait State[T, R]
   /**
@@ -60,7 +62,7 @@ private[streams] object IterateeSubscriber {
    * A Subscriber that is finished. We don't track the precise reason for
    * being finished.
    *
-   * @param result The result of this Subscriber.
+   * @param resultIteratee The result of this Subscriber.
    */
   case class Finished[T, R](resultIteratee: Iteratee[T, R]) extends State[T, R]
 }
@@ -165,20 +167,22 @@ private[streams] class IterateeSubscriber[T, R, S](iter0: Iteratee[T, R])
    * Called when the iteratee folds to a Cont step. We may want to feed
    * an Input to the Iteratee.
    */
-  private def onContStep(cont: Step.Cont[T, R]): Unit = exclusive {
-    case NotSubscribedNoStep(result) =>
-      state = NotSubscribedWithCont(cont, result)
-    case SubscribedNoStep(subs, result) =>
-      subs.request(1)
-      state = SubscribedWithCont(subs, cont, result)
-    case NotSubscribedWithCont(cont, result) =>
-      throw new IllegalStateException("Can't get cont twice")
-    case SubscribedWithCont(subs, cont, result) =>
-      throw new IllegalStateException("Can't get cont twice")
-    case CompletedNoStep(result) =>
-      finishWithCompletedCont(cont, result)
-    case Finished(resultIteratee) =>
-      ()
+  private def onContStep(cont: Step.Cont[T, R]): Unit = {
+    exclusive {
+      case NotSubscribedNoStep(result) =>
+        state = NotSubscribedWithCont(cont, result)
+      case SubscribedNoStep(subs, result) =>
+        subs.request(1)
+        state = SubscribedWithCont(subs, cont, result)
+      case NotSubscribedWithCont(cont, result) =>
+        throw new IllegalStateException("Can't get cont twice")
+      case SubscribedWithCont(subs, cont, result) =>
+        throw new IllegalStateException("Can't get cont twice")
+      case CompletedNoStep(result) =>
+        finishWithCompletedCont(cont, result)
+      case Finished(resultIteratee) =>
+        ()
+    }
   }
 
   /**
@@ -189,6 +193,7 @@ private[streams] class IterateeSubscriber[T, R, S](iter0: Iteratee[T, R])
     case NotSubscribedNoStep(result) =>
       finishWithDoneOrErrorStep(doneOrError, result)
     case SubscribedNoStep(subs, result) =>
+      subs.cancel()
       finishWithDoneOrErrorStep(doneOrError, result)
     case NotSubscribedWithCont(cont, result) =>
       throw new IllegalStateException("Can't get done or error while has cont")

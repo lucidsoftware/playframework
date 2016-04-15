@@ -1,7 +1,9 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs.iteratee
+
+import java.nio.file.Files
 
 import play.api.libs.iteratee.Execution.Implicits.{ defaultExecutionContext => dec }
 import play.api.libs.iteratee.internal.{ eagerFuture, executeFuture }
@@ -14,6 +16,7 @@ import scala.language.reflectiveCalls
  *
  * @define paramEcSingle @param ec The context to execute the supplied function with. The context is prepared on the calling thread before being used.
  * @define paramEcMultiple @param ec The context to execute the supplied functions with. The context is prepared on the calling thread before being used.
+ * @define javadoc http://docs.oracle.com/javase/8/docs/api
  */
 trait Enumerator[E] {
   parent =>
@@ -46,7 +49,7 @@ trait Enumerator[E] {
    * If the iteratee is left in a [[play.api.libs.iteratee.Done]]
    * state then the promise is completed with the iteratee's result.
    * If the iteratee is left in an [[play.api.libs.iteratee.Error]] state, then the
-   * promise is completed with a [[java.lang.RuntimeException]] containing the
+   * promise is completed with a [[$javadoc/java/lang/RuntimeException.html RuntimeException]] containing the
    * iteratee's error message.
    *
    * Unlike `apply` or `|>>`, this method does not allow you to access the
@@ -253,7 +256,7 @@ object Enumerator {
               }(dec)
               Iteratee.flatten(nextI)
             case Input.EOF => {
-              if (attending.single.transformAndGet { _.map(f) }.forall(_ == false)) {
+              if (attending.single.transformAndGet { _.map(f) }.forall(_.forall(_ == false))) {
                 p.complete(Try(Iteratee.flatten(i.feed(Input.EOF))))
               } else {
                 p.success(i)
@@ -580,6 +583,18 @@ object Enumerator {
    */
   def fromFile(file: java.io.File, chunkSize: Int = 1024 * 8)(implicit ec: ExecutionContext): Enumerator[Array[Byte]] = {
     fromStream(new java.io.FileInputStream(file), chunkSize)(ec)
+  }
+
+  /**
+   * Create an enumerator from the given input stream.
+   *
+   * Note that this enumerator will block when it reads from the file.
+   *
+   * @param path The file path to create the enumerator from.
+   * @param chunkSize The size of chunks to read from the file.
+   */
+  def fromPath(path: java.nio.file.Path, chunkSize: Int = 1024 * 8)(implicit ec: ExecutionContext): Enumerator[Array[Byte]] = {
+    fromStream(Files.newInputStream(path), chunkSize)(ec)
   }
 
   /**

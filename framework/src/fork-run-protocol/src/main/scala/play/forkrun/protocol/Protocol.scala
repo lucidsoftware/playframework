@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.forkrun.protocol
 
@@ -15,13 +15,15 @@ case class ForkConfig(
   docsJar: Option[File],
   devSettings: Seq[(String, String)],
   defaultHttpPort: Int,
+  defaultHttpAddress: String,
   watchService: ForkConfig.WatchService,
-  monitoredFiles: Seq[String],
+  monitoredFiles: Seq[File],
   targetDirectory: File,
   pollInterval: Int,
   notifyKey: String,
   reloadKey: String,
-  compileTimeout: Long)
+  compileTimeout: Long,
+  mainClass: String)
 
 object ForkConfig {
   import play.runsupport._

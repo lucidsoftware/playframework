@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.forkrun
 
@@ -8,13 +8,13 @@ import akka.pattern.ask
 import akka.util.Timeout
 import com.typesafe.config.{ Config, ConfigFactory }
 import java.io.File
-import java.lang.{ Runtime, Thread }
+import java.lang.Runtime
 import java.net.InetSocketAddress
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.TimeoutException
 import play.forkrun.protocol.{ ForkConfig, Serializers }
 import play.runsupport.Reloader.{ CompileResult, PlayDevServer }
-import play.runsupport.{ Colors, LoggerProxy, RunHook, FileWatchService, Reloader }
+import play.runsupport.{ Colors, RunHook, FileWatchService, Reloader }
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.util.{ Success, Failure, Properties }
@@ -93,10 +93,12 @@ object ForkRun {
       docsClasspath = config.docsClasspath,
       docsJar = config.docsJar,
       defaultHttpPort = config.defaultHttpPort,
+      defaultHttpAddress = config.defaultHttpAddress,
       projectPath = config.projectDirectory,
       devSettings = config.devSettings,
       args = args,
-      runSbtTask = runSbtTask
+      runSbtTask = runSbtTask,
+      mainClassName = config.mainClass
     )
 
     println()
@@ -107,16 +109,18 @@ object ForkRun {
   }
 
   def sendStart(sbt: ActorRef, config: ForkConfig, args: Seq[String]): InetSocketAddress => Unit = { address =>
-    val url = serverUrl(args, config.defaultHttpPort, address)
+    val url = serverUrl(args, config.defaultHttpPort, config.defaultHttpAddress, address)
     sbt ! SbtClient.Execute(s"${config.notifyKey} $url")
   }
 
   // reparse args to support https urls
-  def serverUrl(args: Seq[String], defaultHttpPort: Int, address: InetSocketAddress): String = {
-    val (properties, httpPort, httpsPort) = Reloader.filterArgs(args, defaultHttpPort)
-    if (httpPort.isDefined) s"http://localhost:${httpPort.get}"
-    else if (httpsPort.isDefined) s"https://localhost:${httpsPort.get}"
-    else s"http://localhost:${address.getPort}"
+  def serverUrl(args: Seq[String], defaultHttpPort: Int, defaultHttpAddress: String, address: InetSocketAddress): String = {
+    val devSettings: Seq[(String, String)] = Seq.empty
+    val (properties, httpPort, httpsPort, httpAddress) = Reloader.filterArgs(args, defaultHttpPort, defaultHttpAddress, devSettings)
+    val host = if (httpAddress == "0.0.0.0") "localhost" else httpAddress
+    if (httpPort.isDefined) s"http://$host:${httpPort.get}"
+    else if (httpsPort.isDefined) s"https://$host:${httpsPort.get}"
+    else s"http://$host:${address.getPort}"
   }
 
   def askForReload(actor: ActorRef)(implicit timeout: Timeout): () => CompileResult = () => {

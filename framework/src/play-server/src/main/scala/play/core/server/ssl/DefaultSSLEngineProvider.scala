@@ -1,3 +1,6 @@
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
 package play.core.server.ssl
 
 import play.core.server.ServerConfig
@@ -55,7 +58,7 @@ class DefaultSSLEngineProvider(serverConfig: ServerConfig, appProvider: Applicat
     } else {
       // Load a generated key store
       logger.warn("Using generated key with self signed certificate for HTTPS. This should not be used in production.")
-      FakeKeyStore.keyManagerFactory(applicationProvider.path)
+      FakeKeyStore.keyManagerFactory(serverConfig.rootDir)
     }
 
     // Load the configured trust manager

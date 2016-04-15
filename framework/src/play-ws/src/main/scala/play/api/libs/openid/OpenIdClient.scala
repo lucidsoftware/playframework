@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs.openid
 
@@ -68,6 +68,7 @@ object OpenID {
   /**
    * Retrieve the URL where the user should be redirected to start the OpenID authentication process
    */
+  @deprecated("Inject OpenIdClient into your component", "2.5.0")
   def redirectURL(openID: String,
     callbackURL: String,
     axRequired: Seq[(String, String)] = Seq.empty,
@@ -78,6 +79,7 @@ object OpenID {
   /**
    * From a request corresponding to the callback from the OpenID server, check the identity of the current user
    */
+  @deprecated("Inject OpenIdClient into your component", "2.5.0")
   def verifiedId(implicit request: Request[_], app: Application): Future[UserInfo] =
     app.injector.instanceOf[OpenIdClient].verifiedId(request)
 }
@@ -228,7 +230,7 @@ class WsDiscovery @Inject() (ws: WSClient) extends Discovery {
       def path(path: String) = if (null == path || path.isEmpty) "/" else path
 
       val uri = (if (url.matches("^(http|HTTP)(s|S)?:.*")) new URI(url) else new URI("http://" + url)).normalize()
-      new URI(scheme(uri), uri.getUserInfo, uri.getHost.toLowerCase, port(uri.getPort), path(uri.getPath), uri.getQuery, null).toURL.toExternalForm
+      new URI(scheme(uri), uri.getUserInfo, uri.getHost.toLowerCase(java.util.Locale.ENGLISH), port(uri.getPort), path(uri.getPath), uri.getQuery, null).toURL.toExternalForm
     }
   }
 

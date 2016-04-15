@@ -1,20 +1,20 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.libs;
 
 import java.io.IOException;
-import java.io.StringWriter;
 
-import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator.Feature;
-import com.fasterxml.jackson.core.JsonGenerator;
-import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 /**
  * Helper functions to handle JsonNode values.
@@ -23,8 +23,10 @@ public class Json {
     private static final ObjectMapper defaultObjectMapper = newDefaultMapper();
     private static volatile ObjectMapper objectMapper = null;
 
-    static ObjectMapper newDefaultMapper() {
+    public static ObjectMapper newDefaultMapper() {
         ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new Jdk8Module());
+        mapper.registerModule(new JavaTimeModule());
         mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         return mapper;
     }
@@ -46,17 +48,14 @@ public class Json {
 
     private static String generateJson(Object o, boolean prettyPrint, boolean escapeNonASCII) {
         try {
-            StringWriter sw = new StringWriter();
-            JsonGenerator jgen = new JsonFactory(mapper()).createGenerator(sw);
+            ObjectWriter writer = mapper().writer();
             if (prettyPrint) {
-                jgen.setPrettyPrinter(new DefaultPrettyPrinter());
+                writer = writer.with(SerializationFeature.INDENT_OUTPUT);
             }
             if (escapeNonASCII) {
-                jgen.enable(Feature.ESCAPE_NON_ASCII);
+                writer = writer.with(Feature.ESCAPE_NON_ASCII);
             }
-            mapper().writeValue(jgen, o);
-            sw.flush();
-            return sw.toString();
+            return writer.writeValueAsString(o);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -161,7 +160,7 @@ public class Json {
      * Inject the object mapper to use.
      *
      * This is intended to be used when Play starts up.  By default, Play will inject its own object mapper here,
-     * but this mapper can be overridden either by a custom plugin or from Global.onStart.
+     * but this mapper can be overridden either by a custom module.
      */
     public static void setObjectMapper(ObjectMapper mapper) {
         objectMapper = mapper;

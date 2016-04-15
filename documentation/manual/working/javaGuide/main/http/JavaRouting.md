@@ -1,4 +1,4 @@
-<!--- Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com> -->
+<!--- Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com> -->
 # HTTP routing
 
 ## The built-in HTTP router
@@ -16,13 +16,13 @@ Routes are defined in the `conf/routes` file, which is compiled. This means that
 
 ## Dependency Injection
 
-Play supports generating two types of routers, one is a dependency injected router, the other is a static router.  The default is the static router, but if you created a new Play application using the Play seed Activator templates, your project will include the following configuration in `build.sbt` telling it to use the injected router:
+Play supports generating two types of routers, one is a dependency injected router, the other is a static router. The default is the dependency injected router, and that is also the case in the Play seed Activator templates, since we recommend you use dependency-injected controllers. If you need to use static controllers you can switch to the static routes generator by adding the following configuration to your `build.sbt`:
 
 ```scala
-routesGenerator := InjectedRoutesGenerator
+routesGenerator := StaticRoutesGenerator
 ```
 
-The code samples in Play's documentation assumes that you are using the injected routes generator.  If you are not using this, you can trivially adapt the code samples for the static routes generator, either by prefixing the controller invocation part of the route with an `@` symbol, or by declaring each of your action methods as `static`.
+The code samples in Play's documentation assumes that you are using the injected routes generator. If you are not using this, you can trivially adapt the code samples for the static routes generator, either by prefixing the controller invocation part of the route with an `@` symbol, or by declaring each of your action methods as `static`.
 
 ## The routes file syntax
 
@@ -32,7 +32,7 @@ Let’s see what a route definition looks like:
 
 @[clients-show](code/javaguide.http.routing.routes)
 
-> Note that in the action call, the parameter type comes after the parameter name, like in Scala.
+> **Note:** in the action call, the parameter type comes after the parameter name, like in Scala.
 
 Each route starts with the HTTP method, followed by the URI pattern. The last element of a route is the call definition.
 
@@ -42,7 +42,7 @@ You can also add comments to the route file, with the `#` character:
 
 ## The HTTP method
 
-The HTTP method can be any of the valid methods supported by HTTP (`GET`, `PATCH`, `POST`, `PUT`, `DELETE`, `HEAD`).
+The HTTP method can be any of the valid methods supported by HTTP (`GET`, `PATCH`, `POST`, `PUT`, `DELETE`, `HEAD`, `OPTIONS`).
 
 ## The URI pattern
 
@@ -54,13 +54,13 @@ For example, to exactly match `GET /clients/all` incoming requests, you can defi
 
 @[static-path](code/javaguide.http.routing.routes)
 
-### Dynamic parts 
+### Dynamic parts
 
 If you want to define a route that, say, retrieves a client by id, you need to add a dynamic part:
 
 @[clients-show](code/javaguide.http.routing.routes)
 
-> Note that a URI pattern may have more than one dynamic part.
+> **Note:** A URI pattern may have more than one dynamic part.
 
 The default matching strategy for a dynamic part is defined by the regular expression `[^/]+`, meaning that any dynamic part defined as `:id` will match exactly one URI path segment.
 
@@ -75,7 +75,7 @@ Here, for a request like `GET /files/images/logo.png`, the `name` dynamic part w
 ### Dynamic parts with custom regular expressions
 
 You can also define your own regular expression for a dynamic part, using the `$id<regex>` syntax:
-    
+
 @[regex-path](code/javaguide.http.routing.routes)
 
 ## Call to action generator method
@@ -108,7 +108,7 @@ Then use the same type for the corresponding action method parameter in the cont
 
 @[clients-show-action](code/javaguide/http/routing/controllers/Clients.java)
 
-> **Note:** The parameter types are specified using a suffix syntax. Also The generic types are specified using the `[]` symbols instead of `<>`, as in Java. For example, `List[String]` is the same type as the Java `List<String>`.
+> **Note:** The parameter types are specified using a suffix syntax. Also, the generic types are specified using the `[]` symbols instead of `<>`, as in Java. For example, `List[String]` is the same type as the Java `List<String>`.
 
 ### Parameters with fixed values
 
@@ -136,7 +136,7 @@ Many routes can match the same request. If there is a conflict, the first route 
 
 The router can be used to generate a URL from within a Java call. This makes it possible to centralize all your URI patterns in a single configuration file, so you can be more confident when refactoring your application.
 
-For each controller used in the routes file, the router will generate a ‘reverse controller’ in the `routes` package, having the same action methods, with the same signature, but returning a `play.mvc.Call` instead of a `play.mvc.Result`. 
+For each controller used in the routes file, the router will generate a ‘reverse controller’ in the `routes` package, having the same action methods, with the same signature, but returning a `play.mvc.Call` instead of a `play.mvc.Result`.
 
 The `play.mvc.Call` defines an HTTP call, and provides both the HTTP method and the URI.
 
@@ -153,3 +153,7 @@ You can then reverse the URL to the `hello` action method, by using the `control
 @[reverse-redirect](code/javaguide/http/routing/controllers/Application.java)
 
 > **Note:** There is a `routes` subpackage for each controller package. So the action `controllers.admin.Application.hello` can be reversed via `controllers.admin.routes.Application.hello`.
+
+## Advanced Routing
+
+See [[Routing DSL|JavaRoutingDsl]].

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs
 
@@ -31,7 +31,7 @@ object MimeTypes {
   /**
    * Mimetypes defined in the current application, as declared in application.conf
    */
-  def applicationTypes: Map[String, String] = play.api.Play.maybeApplication.flatMap { application =>
+  def applicationTypes: Map[String, String] = play.api.Play.privateMaybeApplication.flatMap { application =>
     application.configuration.getConfig("mimetype").map { config =>
       config.subKeys.map { key =>
         (key, config.getString(key))
@@ -521,6 +521,7 @@ object MimeTypes {
         wb1=application/x-qpro
         wbmp=image/vnd.wap.wbmp
         web=application/vndxara
+        webm=video/webm
         wiz=application/msword
         wk1=application/x-123
         wmf=windows/metafile
@@ -529,6 +530,7 @@ object MimeTypes {
         wmls=text/vnd.wap.wmlscript
         wmlsc=application/vnd.wap.wmlscriptc
         woff=application/font-woff
+        woff2=application/font-woff2
         word=application/msword
         wp5=application/wordperfect
         wp6=application/wordperfect

@@ -1,12 +1,12 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs.iteratee
 
-import scala.concurrent.{ ExecutionContext, Future, Promise }
+import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.control.NonFatal
 import play.api.libs.iteratee.Execution.Implicits.{ defaultExecutionContext => dec }
-import play.api.libs.iteratee.internal.{ eagerFuture, executeFuture, executeIteratee, identityFunc, prepared }
+import play.api.libs.iteratee.internal.{ eagerFuture, executeFuture, executeIteratee, prepared }
 
 /**
  * Various helper methods to construct, compose and traverse Iteratees.
@@ -207,11 +207,11 @@ object Iteratee {
      * @tparam B Type of `otherwise`
      * @return An `Iteratee[E, Either[B, A]]` that consumes one input and produces a `Right(eofValue)` if this input is [[play.api.libs.iteratee.Input.EOF]] otherwise it produces a `Left(otherwise)`
      */
-    def apply[A, B](otherwise: B)(eofValue: A): Iteratee[E, Either[B, A]]
+    def apply[A, B](otherwise: => B)(eofValue: A): Iteratee[E, Either[B, A]]
   }
 
   def eofOrElse[E] = new EofOrElse[E] {
-    def apply[A, B](otherwise: B)(eofValue: A): Iteratee[E, Either[B, A]] = {
+    def apply[A, B](otherwise: => B)(eofValue: A): Iteratee[E, Either[B, A]] = {
       def cont: Iteratee[E, Either[B, A]] = Cont((in: Input[E]) => {
         in match {
           case Input.El(e) => Done(Left(otherwise), in)
@@ -800,14 +800,6 @@ object Error {
 
 /**
  * An Exception that represents an Iteratee that ended up in an Error state with the given
- * error message. This exception will eventually be removed and replaced with
- * `IterateeException` (notice the extra `c`).
- */
-@deprecated("Use IterateeException instead (notice the extra 'c')", "2.4.0")
-class IterateeExeption(msg: String) extends Exception(msg)
-
-/**
- * An Exception that represents an Iteratee that ended up in an Error state with the given
  * error message.
  */
-class IterateeException(msg: String) extends IterateeExeption(msg)
+class IterateeException(msg: String) extends Exception(msg)

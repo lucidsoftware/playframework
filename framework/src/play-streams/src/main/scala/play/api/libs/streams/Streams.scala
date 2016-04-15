@@ -1,7 +1,13 @@
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
 package play.api.libs.streams
 
+import akka.stream.Materializer
+import akka.stream.scaladsl._
 import org.reactivestreams._
 import play.api.libs.iteratee._
+import play.api.libs.streams.impl.{ SubscriberPublisherProcessor, SubscriberIteratee }
 import scala.concurrent.{ ExecutionContext, Future, Promise }
 
 /**
@@ -30,7 +36,7 @@ object Streams {
   /**
    * Adapt a Promise into a Processor, creating an Processor that
    * consumes a single element and publishes it. The Subscriber end
-   * of the the Processor is created with `promiseToSubscriber`. The
+   * of the Processor is created with `promiseToSubscriber`. The
    * Publisher end of the Processor is created with `futureToPublisher`.
    */
   def promiseToProcessor[T](prom: Promise[T]): Processor[T, T] = {
@@ -69,6 +75,26 @@ object Streams {
   }
 
   /**
+   * Adapt a Subscriber to an Iteratee.
+   *
+   * The Iteratee will attempt to give the Subscriber as many elements as
+   * demanded.  When the subscriber cancels, the iteratee enters the done
+   * state.
+   *
+   * Feeding EOF into the iteratee will cause the Subscriber to be fed a
+   * completion event, and the iteratee will go into the done state.
+   *
+   * The iteratee will not enter the Cont state until demand is requested
+   * by the subscriber.
+   *
+   * This Iteratee will never enter the error state, unless the subscriber
+   * deviates from the reactive streams spec.
+   */
+  def subscriberToIteratee[T](subscriber: Subscriber[T]): Iteratee[T, Unit] = {
+    new SubscriberIteratee[T](subscriber)
+  }
+
+  /**
    * Adapt an Iteratee to a Publisher, publishing its Done value. If
    * the iteratee is *not* Done then an exception is published.
    *
@@ -80,7 +106,7 @@ object Streams {
   def iterateeDoneToPublisher[T, U](iter: Iteratee[T, U]): Publisher[U] = {
     iterateeFoldToPublisher[T, U, U](iter, {
       case Step.Done(x, _) => Future.successful(x)
-      case notDone: Step[T, U] => Future.failed(new Exception("Can only get value from Done iteratee: $notDone"))
+      case notDone: Step[T, U] => Future.failed(new Exception(s"Can only get value from Done iteratee: $notDone"))
     })(Execution.trampoline)
   }
 
@@ -109,8 +135,13 @@ object Streams {
   /**
    * Adapt an Enumerator to a Publisher. Each Subscriber will be
    * adapted to an Iteratee and applied to the Enumerator. Input of
-   * type Input.El will result in calls to onNext. Input of type
-   * Input.EOF will call onComplete and end the Subscription.
+   * type Input.El will result in calls to onNext.
+   *
+   * Either onError or onComplete will always be invoked as the
+   * last call to the subscriber, the former happening if the
+   * enumerator fails with an error, the latter happening when
+   * the first of either Input.EOF is fed, or the enumerator
+   * completes.
    *
    * If emptyElement is None then Input of type Input.Empty will
    * be ignored. If it is set to Some(x) then it will call onNext
@@ -128,6 +159,32 @@ object Streams {
     new impl.PublisherEnumerator(pubr)
 
   /**
+   * Adapt an Enumeratee to a Processor.
+   */
+  def enumerateeToProcessor[A, B](enumeratee: Enumeratee[A, B]): Processor[A, B] = {
+    val (iter, enum) = Concurrent.joined[A]
+    val (subr, _) = iterateeToSubscriber(iter)
+    val pubr = enumeratorToPublisher(enum &> enumeratee)
+    new SubscriberPublisherProcessor(subr, pubr)
+  }
+
+  /**
+   * Adapt a Processor to an Enumeratee.
+   */
+  def processorToEnumeratee[A, B](processor: Processor[A, B]): Enumeratee[A, B] = {
+    val iter = subscriberToIteratee(processor)
+    val enum = publisherToEnumerator(processor)
+    new Enumeratee[A, B] {
+      override def applyOn[U](inner: Iteratee[B, U]): Iteratee[A, Iteratee[B, U]] = {
+        import play.api.libs.iteratee.Execution.Implicits.trampoline
+        iter.map { _ =>
+          Iteratee.flatten(enum(inner))
+        }
+      }
+    }
+  }
+
+  /**
    * Join a Subscriber and Publisher together to make a Processor.
    * The Processor delegates its Subscriber methods to the Subscriber
    * and its Publisher methods to the Publisher. The Processor
@@ -135,4 +192,40 @@ object Streams {
    */
   def join[T, U](subr: Subscriber[T], pubr: Publisher[U]): Processor[T, U] =
     new impl.SubscriberPublisherProcessor(subr, pubr)
+
+  /**
+   * Adapt an Iteratee to an Accumulator.
+   *
+   * This is done by adapting the iteratee to a subscriber, and then creating
+   * an Akka streams Sink from that, which is mapped to the result of running
+   * the adapted iteratee subscriber result.
+   */
+  def iterateeToAccumulator[T, U](iter: Iteratee[T, U]): Accumulator[T, U] = {
+    val (subr, resultIter) = iterateeToSubscriber(iter)
+    val result = resultIter.run
+    val sink = Sink.fromSubscriber(subr).mapMaterializedValue(_ => result)
+    Accumulator(sink)
+  }
+
+  /**
+   * Adapt an Accumulator to an Iteratee.
+   *
+   * This is done by creating an Akka streams Subscriber based Source, and
+   * adapting that to an Iteratee, before running the Akka streams source.
+   *
+   * This method for adaptation requires a Materializer to materialize
+   * the subscriber, however it does not materialize the subscriber until the
+   * iteratees fold method has been invoked.
+   */
+  def accumulatorToIteratee[T, U](accumulator: Accumulator[T, U])(implicit mat: Materializer): Iteratee[T, U] = {
+    new Iteratee[T, U] {
+      def fold[B](folder: (Step[T, U]) => Future[B])(implicit ec: ExecutionContext) = {
+        Source.asSubscriber.toMat(accumulator.toSink) { (subscriber, result) =>
+          import play.api.libs.iteratee.Execution.Implicits.trampoline
+          subscriberToIteratee(subscriber).mapM(_ => result)(trampoline)
+        }.run().fold(folder)
+      }
+    }
+  }
+
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 
 import sbt._
@@ -12,11 +12,11 @@ import scala.util.Properties
 object DevModeBuild {
 
   object DevModeKeys {
-    val writeRunProperties = TaskKey[Unit]("write-run-properties")
-    val waitForServer = TaskKey[Unit]("wait-for-server")
-    val resetReloads = TaskKey[Unit]("reset-reloads")
-    val verifyReloads = InputKey[Unit]("verify-reloads")
-    val verifyResourceContains = InputKey[Unit]("verify-resource-contains")
+    val writeRunProperties = TaskKey[Unit]("writeRunProperties")
+    val waitForServer = TaskKey[Unit]("waitForServer")
+    val resetReloads = TaskKey[Unit]("resetReloads")
+    val verifyReloads = InputKey[Unit]("verifyReloads")
+    val verifyResourceContains = InputKey[Unit]("verifyResourceContains")
   }
 
   def settings: Seq[Setting[_]] = Seq(
@@ -87,6 +87,8 @@ object DevModeBuild {
 
   val MaxAttempts = 10
   val WaitTime = 500l
+  val ConnectTimeout = 10000
+  val ReadTimeout = 10000
 
   @tailrec
   def verifyResourceContains(path: String, status: Int, assertions: Seq[String], attempts: Int): Unit = {
@@ -95,6 +97,8 @@ object DevModeBuild {
     try {
       val url = new java.net.URL("http://localhost:9000" + path)
       val conn = url.openConnection().asInstanceOf[java.net.HttpURLConnection]
+      conn.setConnectTimeout(ConnectTimeout)
+      conn.setReadTimeout(ReadTimeout)      
 
       if (status == conn.getResponseCode) {
         messages += s"Resource at $path returned $status as expected"
@@ -127,6 +131,7 @@ object DevModeBuild {
       messages.foreach(println)
     } catch {
       case e: Exception =>
+        println(s"Got exception: $e")
         if (attempts < MaxAttempts) {
           Thread.sleep(WaitTime)
           verifyResourceContains(path, status, assertions, attempts + 1)

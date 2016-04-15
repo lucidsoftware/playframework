@@ -1,14 +1,12 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package controllers
 
+import javax.inject.Inject
+
 import play.api._
 import play.api.mvc._
-import play.api.libs._
-import play.api.libs.iteratee._
-
-import Play.current
 
 import java.io._
 
@@ -16,7 +14,7 @@ import java.io._
  * Controller that serves static resources from an external folder.
  * It useful in development mode if you want to serve static assets that shouldn't be part of the build process.
  *
- * Not that this controller is not intented to be used in production mode and can lead to security issues.
+ * Note that this controller IS NOT intended to be used in production mode and can lead to security issues.
  * Therefore it is automatically disabled in production mode.
  *
  * All assets are served with max-age=3600 cache directive.
@@ -29,24 +27,24 @@ import java.io._
  * }}}
  *
  */
-object ExternalAssets extends Controller {
+class ExternalAssets @Inject() (environment: Environment) extends Controller {
 
   val AbsolutePath = """^(/|[a-zA-Z]:\\).*""".r
 
   /**
    * Generates an `Action` that serves a static resource from an external folder
    *
-   * @param absoluteRootPath the root folder for searching the static resource files such as `"/home/peter/public"`, `C:\external` or `relativeToYourApp`
+   * @param rootPath the root folder for searching the static resource files such as `"/home/peter/public"`, `C:\external` or `relativeToYourApp`
    * @param file the file part extracted from the URL
    */
   def at(rootPath: String, file: String): Action[AnyContent] = Action { request =>
-    Play.mode match {
+    environment.mode match {
       case Mode.Prod => NotFound
       case _ => {
 
         val fileToServe = rootPath match {
           case AbsolutePath(_) => new File(rootPath, file)
-          case _ => new File(Play.application.getFile(rootPath), file)
+          case _ => new File(environment.getFile(rootPath), file)
         }
 
         if (fileToServe.exists) {

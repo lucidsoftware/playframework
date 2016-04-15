@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.data
 
@@ -216,23 +216,29 @@ case class Form[T](mapping: Mapping[T], data: Map[String, String], errors: Seq[F
   /**
    * Returns the concrete value, if the submission was a success.
    *
-   * Note that this method fails with an Exception if this form as errors.
+   * Note that this method fails with an Exception if this form has errors.
    */
   def get: T = value.get
 
   /**
    * Returns the form errors serialized as Json.
    */
-  def errorsAsJson(implicit lang: play.api.i18n.Messages): play.api.libs.json.JsValue = {
+  def errorsAsJson(implicit messages: play.api.i18n.Messages): play.api.libs.json.JsValue = {
 
     import play.api.libs.json._
 
     Json.toJson(
       errors.groupBy(_.key).mapValues { errors =>
-        errors.map(e => play.api.i18n.Messages(e.message, e.args: _*))
+        errors.map(e => messages(e.message, e.args.map(a => translateMsgArg(a)): _*))
       }
     )
 
+  }
+
+  private def translateMsgArg(msgArg: Any)(implicit messages: play.api.i18n.Messages) = msgArg match {
+    case key: String => messages(key)
+    case keys: Seq[String] => keys.map(key => messages(key))
+    case _ => msgArg
   }
 
   /**
@@ -394,7 +400,8 @@ private[data] object FormUtils {
  * A form error.
  *
  * @param key The error key (should be associated with a field using the same key).
- * @param message The form message (often a simple message key needing to be translated).
+ * @param messages The form message (often a simple message key needing to be translated), if more than one message
+ *                 is passed the last one will be used.
  * @param args Arguments used to format the message.
  */
 case class FormError(key: String, messages: Seq[String], args: Seq[Any] = Nil) {
@@ -556,7 +563,7 @@ trait Mapping[T] {
   protected def collectErrors(t: T): Seq[FormError] = {
     constraints.map(_(t)).collect {
       case Invalid(errors) => errors.toSeq
-    }.flatten.map(ve => FormError(key, ve.message, ve.args))
+    }.flatten.map(ve => FormError(key, ve.messages, ve.args))
   }
 
 }
@@ -772,7 +779,7 @@ case class OptionalMapping[T](wrapped: Mapping[T], val constraints: Seq[Constrai
    *   Form("phonenumber" -> text.verifying(required) )
    * }}}
    *
-   * @param constraints the constraints to add
+   * @param addConstraints the constraints to add
    * @return the new mapping
    */
   def verifying(addConstraints: Constraint[Option[T]]*): Mapping[Option[T]] = {
@@ -853,7 +860,7 @@ case class FieldMapping[T](val key: String = "", val constraints: Seq[Constraint
    *   Form("phonenumber" -> text.verifying(required) )
    * }}}
    *
-   * @param constraints the constraints to add
+   * @param addConstraints the constraints to add
    * @return the new mapping
    */
   def verifying(addConstraints: Constraint[T]*): Mapping[T] = {

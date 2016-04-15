@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.forkrun.protocol
 
@@ -58,13 +58,15 @@ object SerializersSpec extends Specification with PicklingTestUtils {
         docsJar = Option(file("docs")),
         devSettings = Seq("a" -> "b"),
         defaultHttpPort = 3456,
+        defaultHttpAddress = "1.2.3.4",
         watchService = ForkConfig.JNotifyWatchService,
-        monitoredFiles = Seq("c"),
+        monitoredFiles = Seq(file("c")),
         targetDirectory = file("target"),
         pollInterval = 100,
         notifyKey = "abcdefg",
         reloadKey = "hijklmnop",
-        compileTimeout = 1000
+        compileTimeout = 1000,
+        mainClass = "play.Server"
       )
       roundTrip(forkConfig)
     }

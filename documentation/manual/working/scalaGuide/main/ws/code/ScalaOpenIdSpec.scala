@@ -1,3 +1,6 @@
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
 package scalaguide.ws.scalaopenid
 
 import play.api.test._
@@ -5,6 +8,7 @@ import play.api.test._
 //#dependency
 import javax.inject.Inject
 import scala.concurrent.Future
+import scala.concurrent.ExecutionContext.Implicits.global
 
 import play.api._
 import play.api.mvc._
@@ -39,7 +43,7 @@ object ScalaOpenIdSpec extends PlaySpecification {
     Form(single(
       "openid" -> nonEmptyText
     )).bindFromRequest.fold({ error =>
-      Logger.info("bad request " + error.toString)
+      Logger.info(s"bad request ${error.toString}")
       Future.successful(BadRequest(error.toString))
     }, { openId =>
       openIdClient.redirectURL(openId, routes.Application.openIdCallback.absoluteURL())

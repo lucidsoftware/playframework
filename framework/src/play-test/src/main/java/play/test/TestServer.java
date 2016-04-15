@@ -1,10 +1,10 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.test;
 
 import play.Application;
-import play.core.server.NettyServer;
+import play.core.server.ServerProvider;
 import scala.Option;
 
 /**
@@ -19,7 +19,7 @@ public class TestServer extends play.api.test.TestServer {
      * @param application The Application to load in this server.
      */
     public TestServer(int port, Application application) {
-        super(port, application.getWrappedApplication(), Option.<Object>apply(null), NettyServer.defaultServerProvider());
+        super(port, application.getWrappedApplication(), play.libs.Scala.<Object>None(), play.libs.Scala.<ServerProvider>None());
     }
 
     /**
@@ -29,7 +29,7 @@ public class TestServer extends play.api.test.TestServer {
      * @param sslPort HTTPS port to bind on
      */
     public TestServer(int port, Application application, int sslPort) {
-        super(port, application.getWrappedApplication(), Option.<Object>apply(sslPort), NettyServer.defaultServerProvider());
+        super(port, application.getWrappedApplication(), Option.<Object>apply(sslPort), play.libs.Scala.<ServerProvider>None());
     }
 
 }

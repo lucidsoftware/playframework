@@ -1,27 +1,20 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.libs.json
 
-import java.time.{
-  Instant,
-  LocalDate,
-  LocalDateTime,
-  ZoneId,
-  ZoneOffset,
-  ZonedDateTime
-}
-import java.time.temporal.Temporal
 import java.time.format.DateTimeFormatter
+import java.time.temporal.Temporal
+import java.time.{ Instant, LocalDate, LocalDateTime, OffsetDateTime, ZoneOffset, ZonedDateTime }
+
+import com.fasterxml.jackson.databind.JsonNode
+import play.api.libs.functional.ContravariantFunctor
+import play.api.libs.json.Json._
+import play.api.libs.json.jackson.JacksonJson
 
 import scala.annotation.implicitNotFound
 import scala.collection._
 import scala.reflect.ClassTag
-
-import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.databind.node.{ ArrayNode, ObjectNode }
-
-import Json._
 
 /**
  * Json serializer: write an implicit to define a serializer for any type
@@ -30,19 +23,18 @@ import Json._
   "No Json serializer found for type ${A}. Try to implement an implicit Writes or Format for this type."
 )
 trait Writes[-A] {
-
   /**
    * Convert the object into a JsValue
    */
   def writes(o: A): JsValue
 
   /**
-   * transforms the resulting JsValue using transformer function
+   * Transforms the resulting [[JsValue]] using transformer function
    */
   def transform(transformer: JsValue => JsValue): Writes[A] = Writes[A] { a => transformer(this.writes(a)) }
 
   /**
-   * transforms resulting JsValue using Writes[JsValue]
+   * Transforms resulting [[JsValue]] using Writes[JsValue]
    */
   def transform(transformer: Writes[JsValue]): Writes[A] = Writes[A] { a => transformer.writes(this.writes(a)) }
 
@@ -52,8 +44,19 @@ trait Writes[-A] {
   "No Json serializer as JsObject found for type ${A}. Try to implement an implicit OWrites or OFormat for this type."
 )
 trait OWrites[-A] extends Writes[A] {
-
   def writes(o: A): JsObject
+
+  /**
+   * Transforms the resulting [[JsValue]] using transformer function
+   */
+  def transform(transformer: JsObject => JsObject): OWrites[A] =
+    OWrites[A] { a => transformer(this.writes(a)) }
+
+  /**
+   * Transforms resulting [[JsValue]] using Writes[JsValue]
+   */
+  def transform(transformer: OWrites[JsObject]): OWrites[A] =
+    OWrites[A] { a => transformer.writes(this.writes(a)) }
 
 }
 
@@ -75,7 +78,6 @@ object OWrites extends PathWrites with ConstraintWrites {
   def apply[A](f: A => JsObject): OWrites[A] = new OWrites[A] {
     def writes(a: A): JsObject = f(a)
   }
-
 }
 
 /**
@@ -86,18 +88,15 @@ object Writes extends PathWrites with ConstraintWrites with DefaultWrites {
   val constraints: ConstraintWrites = this
   val path: PathWrites = this
 
-  /*implicit val contravariantfunctorWrites:ContravariantFunctor[Writes] = new ContravariantFunctor[Writes] {
+  implicit val contravariantfunctorWrites: ContravariantFunctor[Writes] = new ContravariantFunctor[Writes] {
 
-    def contramap[A,B](wa:Writes[A], f: B => A):Writes[B] = Writes[B]( b => wa.writes(f(b)) )
-
-  }*/
-
-  def apply[A](f: A => JsValue): Writes[A] = new Writes[A] {
-
-    def writes(a: A): JsValue = f(a)
+    def contramap[A, B](wa: Writes[A], f: B => A): Writes[B] = Writes[B](b => wa.writes(f(b)))
 
   }
 
+  def apply[A](f: A => JsValue): Writes[A] = new Writes[A] {
+    def writes(a: A): JsValue = f(a)
+  }
 }
 
 /**
@@ -179,22 +178,22 @@ trait DefaultWrites {
   /**
    * Serializer for Array[T] types.
    */
-  implicit def arrayWrites[T: ClassTag](implicit fmt: Writes[T]): Writes[Array[T]] = new Writes[Array[T]] {
-    def writes(ts: Array[T]) = JsArray((ts.map(t => toJson(t)(fmt))).toList)
+  implicit def arrayWrites[T: ClassTag: Writes]: Writes[Array[T]] = Writes[Array[T]] { ts =>
+    JsArray(ts.map(toJson(_)).toSeq)
   }
 
   /**
    * Serializer for Map[String,V] types.
    */
-  implicit def mapWrites[V](implicit fmtv: Writes[V]): OWrites[collection.immutable.Map[String, V]] = OWrites[collection.immutable.Map[String, V]] { ts =>
-    JsObject(ts.map { case (k, v) => (k, toJson(v)(fmtv)) }.toList)
+  implicit def mapWrites[V: Writes]: OWrites[Map[String, V]] = OWrites[Map[String, V]] { ts =>
+    JsObject(ts.mapValues(toJson(_)).toSeq)
   }
 
   /**
    * Serializer for Traversables types.
    */
-  implicit def traversableWrites[A: Writes] = new Writes[Traversable[A]] {
-    def writes(as: Traversable[A]) = JsArray(as.map(toJson(_)).toSeq)
+  implicit def traversableWrites[A: Writes] = Writes[Traversable[A]] { as =>
+    JsArray(as.map(toJson(_)).toSeq)
   }
 
   /**
@@ -240,54 +239,52 @@ trait DefaultWrites {
       def format(temporal: LocalDateTime): String = formatter.format(temporal)
     }
 
-    implicit def PatternLocalDateTimeFormatter(pattern: String): TemporalFormatter[LocalDateTime] = new TemporalFormatter[LocalDateTime] {
-      def format(temporal: LocalDateTime): String =
-        DateTimeFormatter.ofPattern(pattern).format(temporal)
+    implicit def PatternLocalDateTimeFormatter(pattern: String): TemporalFormatter[LocalDateTime] =
+      DefaultLocalDateTimeFormatter(DateTimeFormatter.ofPattern(pattern))
+
+    implicit def DefaultOffsetDateTimeFormatter(formatter: DateTimeFormatter): TemporalFormatter[OffsetDateTime] = new TemporalFormatter[OffsetDateTime] {
+      def format(temporal: OffsetDateTime): String = formatter.format(temporal)
     }
+
+    implicit def PatternOffsetDateTimeFormatter(pattern: String): TemporalFormatter[OffsetDateTime] =
+      DefaultOffsetDateTimeFormatter(DateTimeFormatter.ofPattern(pattern))
 
     implicit def DefaultZonedDateTimeFormatter(formatter: DateTimeFormatter): TemporalFormatter[ZonedDateTime] = new TemporalFormatter[ZonedDateTime] {
       def format(temporal: ZonedDateTime): String = formatter.format(temporal)
     }
 
-    implicit def PatternZonedDateTimeFormatter(pattern: String): TemporalFormatter[ZonedDateTime] = new TemporalFormatter[ZonedDateTime] {
-      def format(temporal: ZonedDateTime): String =
-        DateTimeFormatter.ofPattern(pattern).format(temporal)
-    }
+    implicit def PatternZonedDateTimeFormatter(pattern: String): TemporalFormatter[ZonedDateTime] =
+      DefaultZonedDateTimeFormatter(DateTimeFormatter.ofPattern(pattern))
 
     implicit def DefaultDateFormatter(formatter: DateTimeFormatter): TemporalFormatter[LocalDate] = new TemporalFormatter[LocalDate] {
       def format(temporal: LocalDate): String = formatter.format(temporal)
     }
 
-    implicit def PatternDateFormatter(pattern: String): TemporalFormatter[LocalDate] = new TemporalFormatter[LocalDate] {
-      def format(temporal: LocalDate): String =
-        DateTimeFormatter.ofPattern(pattern).format(temporal)
-    }
+    implicit def PatternDateFormatter(pattern: String): TemporalFormatter[LocalDate] =
+      DefaultDateFormatter(DateTimeFormatter.ofPattern(pattern))
 
     implicit def DefaultInstantFormatter(formatter: DateTimeFormatter): TemporalFormatter[Instant] = new TemporalFormatter[Instant] {
-      def format(temporal: Instant): String =
-        formatter format LocalDateTime.ofInstant(temporal, ZoneId.systemDefault)
+      def format(temporal: Instant): String = formatter.format(temporal)
     }
 
-    implicit def PatternInstantFormatter(pattern: String): TemporalFormatter[Instant] = new TemporalFormatter[Instant] {
-      def format(temporal: Instant): String =
-        DateTimeFormatter.ofPattern(pattern).
-          format(LocalDateTime.ofInstant(temporal, ZoneId.systemDefault))
-    }
+    implicit def PatternInstantFormatter(pattern: String): TemporalFormatter[Instant] =
+      DefaultInstantFormatter(DateTimeFormatter.ofPattern(pattern).withZone(ZoneOffset.UTC))
   }
 
   /**
    * Serializer for Java8 temporal types (e.g. `java.time.LocalDateTime`)
-   * to be written as JSON string, using the default time zone.
+   * to be written as JSON string.
    *
-   * @tparam T Type of formatting argument
-   * @param formating an argument to instantiate formatter
+   * @tparam A the Java8 temporal type to be considered: LocalDateTime, ZonedDateTime, Instant
+   * @tparam B Type of formatting argument
+   *
+   * @param formatting an argument to instantiate formatter
    *
    * {{{
    * import java.time.LocalDateTime
    * import play.api.libs.json.Writes
-   * import play.api.libs.json.Java8Writes
    *
-   * implicit val Writes: Writes[LocalDateTime] =
+   * implicit val temporalWrites: Writes[LocalDateTime] =
    *   temporalWrites[LocalDateTime, DateTimeFormatter](
    *     DateTimeFormatter.ISO_LOCAL_DATE_TIME)
    * }}}
@@ -297,24 +294,32 @@ trait DefaultWrites {
   }
 
   /**
-   * The default typeclass to write a `java.time.LocalDateTime`,
-   * using '2011-12-03T10:15:30' format, and default time zone.
-   */
+    * The default typeclass to write a `java.time.LocalDateTime`,
+    * using '2011-12-03T10:15:30' format.
+    */
   implicit val DefaultLocalDateTimeWrites =
     temporalWrites[LocalDateTime, DateTimeFormatter](
       DateTimeFormatter.ISO_LOCAL_DATE_TIME)
 
   /**
+    * The default typeclass to write a `java.time.OffsetDateTime`,
+    * using '2011-12-03T10:15:30+02:00' format.
+    */
+  implicit val DefaultOffsetDateTimeWrites =
+    temporalWrites[OffsetDateTime, DateTimeFormatter](
+      DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+
+  /**
    * The default typeclass to write a `java.time.ZonedDateTime`,
-   * using '2011-12-03T10:15:30' format, and default time zone.
+   * using '2011-12-03T10:15:30+01:00[Europe/Paris]' format.
    */
   implicit val DefaultZonedDateTimeWrites =
     temporalWrites[ZonedDateTime, DateTimeFormatter](
-      DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+      DateTimeFormatter.ISO_ZONED_DATE_TIME)
 
   /**
    * The default typeclass to write a `java.time.LocalDate`,
-   * using '2011-12-03' format, and default time zone.
+   * using '2011-12-03' format.
    */
   implicit val DefaultLocalDateWrites =
     temporalWrites[LocalDate, DateTimeFormatter](
@@ -322,11 +327,11 @@ trait DefaultWrites {
 
   /**
    * The default typeclass to write a `java.time.Instant`,
-   * using '2011-12-03T10:15:30' format, and default time zone.
+   * using '2011-12-03T10:15:30Z' format.
    */
-  implicit val DefaultInstantWrites =
-    temporalWrites[Instant, DateTimeFormatter](
-      DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+  implicit val DefaultInstantWrites = new Writes[Instant] {
+    def writes(i: Instant): JsValue = JsString(i.toString)
+  }
 
   /**
    * Serializer for `java.time.LocalDateTime` as JSON number.
@@ -334,18 +339,14 @@ trait DefaultWrites {
    * {{{
    * import java.time.LocalDateTime
    * import play.api.libs.json.Writes
-   * import play.api.libs.json.Java8Writes
    *
-   * implicit val Writes = LocalDateTimeNumberWrites[LocalDateTime]
+   * implicit val ldtnWrites = Writes.LocalDateTimeNumberWrites
    * }}}
    */
   val LocalDateTimeNumberWrites: Writes[LocalDateTime] =
     new Writes[LocalDateTime] {
-      lazy val formatter =
-        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
-
       def writes(t: LocalDateTime): JsValue = JsNumber(BigDecimal.valueOf(
-        Instant.parse(formatter format t).toEpochMilli))
+        t.toInstant(ZoneOffset.UTC).toEpochMilli))
     }
 
   /**
@@ -354,9 +355,8 @@ trait DefaultWrites {
    * {{{
    * import java.time.ZonedDateTime
    * import play.api.libs.json.Writes
-   * import play.api.libs.json.Java8Writes
    *
-   * implicit val Writes = ZonedDateTimeNumberWrites[ZonedDateTime]
+   * implicit val zdtnWrites = Writes.ZonedDateTimeNumberWrites
    * }}}
    */
   val ZonedDateTimeNumberWrites: Writes[ZonedDateTime] =
@@ -371,17 +371,13 @@ trait DefaultWrites {
    * {{{
    * import java.time.LocalDate
    * import play.api.libs.json.Writes
-   * import play.api.libs.json.Java8Writes
    *
-   * implicit val Writes = LocalDateNumberWrites[LocalDate]
+   * implicit val ldnWrites = Writes.LocalDateNumberWrites
    * }}}
    */
   val LocalDateNumberWrites: Writes[LocalDate] = new Writes[LocalDate] {
-    lazy val formatter =
-      DateTimeFormatter.ofPattern("yyyy-MM-dd'T'00:00:00'Z'")
-
     def writes(t: LocalDate): JsValue = JsNumber(BigDecimal.valueOf(
-      Instant.parse(formatter format t).toEpochMilli))
+      t.atStartOfDay.toInstant(ZoneOffset.UTC).toEpochMilli))
   }
 
   /**
@@ -390,9 +386,8 @@ trait DefaultWrites {
    * {{{
    * import java.time.Instant
    * import play.api.libs.json.Writes
-   * import play.api.libs.json.Java8Writes
    *
-   * implicit val Writes = InstantNumberWrites[Instant]
+   * implicit val inWrites = Writes.InstantNumberWrites
    * }}}
    */
   val InstantNumberWrites: Writes[Instant] = new Writes[Instant] {
@@ -459,7 +454,7 @@ trait DefaultWrites {
    * Serializer for java.util.UUID
    */
   implicit object UuidWrites extends Writes[java.util.UUID] {
-    def writes(u: java.util.UUID) = JsString(u.toString())
+    def writes(u: java.util.UUID) = JsString(u.toString)
   }
 
   /**
@@ -469,4 +464,20 @@ trait DefaultWrites {
     def writes(value: E#Value): JsValue = JsString(value.toString)
   }
 
+  /**
+   * Serializer for Any, used for the args of ValidationErrors.
+   */
+  private[json] object anyWrites extends Writes[Any] {
+    def writes(a: Any): JsValue = a match {
+      case s: String => JsString(s)
+      case nb: Int => JsNumber(nb)
+      case nb: Short => JsNumber(nb)
+      case nb: Long => JsNumber(nb)
+      case nb: Double => JsNumber(nb)
+      case nb: Float => JsNumber(nb)
+      case b: Boolean => JsBoolean(b)
+      case js: JsValue => js
+      case x => JsString(x.toString)
+    }
+  }
 }

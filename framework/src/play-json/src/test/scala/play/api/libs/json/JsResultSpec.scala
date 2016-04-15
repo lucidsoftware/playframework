@@ -1,3 +1,6 @@
+/*
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
+ */
 package play.api.libs.json
 
 import play.api.libs.functional.Functor
@@ -5,7 +8,8 @@ import play.api.libs.functional.Functor
 import JsResult.functorJsResult
 
 object JsResultSpec extends org.specs2.mutable.Specification {
-  "JSON result" title
+
+  title("JSON result")
 
   "Result" should {
     "be functor" in {

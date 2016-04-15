@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package scalaguide.forms.scalaforms {
 
@@ -27,7 +27,7 @@ import play.api.data.validation.Constraints._
 @RunWith(classOf[JUnitRunner])
 class ScalaFormsSpec extends Specification with Controller {
 
-  val conf = Configuration.empty
+  val conf = Configuration.reference
   implicit val messages: Messages = new DefaultMessagesApi(Environment.simple(), conf, new DefaultLangs(conf)).preferred(Seq.empty)
 
   "A scala forms" should {
@@ -81,6 +81,17 @@ class ScalaFormsSpec extends Specification with Controller {
       controllers.Application.userFormTupleName === "bob"
     }
 
+    "handling form with errors" in {
+      val userFormConstraints2 = controllers.Application.userFormConstraints2
+
+      implicit val request = FakeRequest().withFormUrlEncodedBody("name" -> "", "age" -> "25")
+
+      //#userForm-constraints-2-with-errors
+      val boundForm = userFormConstraints2.bind(Map("bob" -> "", "age" -> "25"))
+      boundForm.hasErrors must beTrue
+      //#userForm-constraints-2-with-errors
+    }
+
     "handling binding failure" in {
       val userForm = controllers.Application.userFormConstraints
 
@@ -89,7 +100,7 @@ class ScalaFormsSpec extends Specification with Controller {
       val boundForm = userForm.bindFromRequest
       boundForm.hasErrors must beTrue
     }
-    
+
     "display global errors user template" in {
       val userForm = controllers.Application.userFormConstraintsAdHoc
       
@@ -101,7 +112,21 @@ class ScalaFormsSpec extends Specification with Controller {
       val html = views.html.user(boundForm)
       html.body must contain("Failed form constraints!")
     }
-    
+
+    "map single values" in {
+
+      //#form-single-value
+      val singleForm = Form(
+        single(
+          "email" -> email
+        )
+      )
+
+      val emailValue = singleForm.bind(Map("email" -> "bob@example.com")).get
+      //#form-single-value
+      emailValue must beEqualTo("bob@example.com")
+    }
+
   }
 }
 

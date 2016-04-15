@@ -1,4 +1,4 @@
-<!--- Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com> -->
+<!--- Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com> -->
 # Creating a new application
 
 ## Create a new application with the activator command
@@ -23,14 +23,14 @@ In either case, you can replace `my-first-app` with whatever name you want your 
 
 [[images/activatorNew.png]]
 
+> If you wish to use other Activator templates, you can do this by running `activator new`. This will prompt you for an application name, and then give you a chance to browse and select an appropriate template.
+
 Once the application has been created you can use the `activator` command again to enter the [[Play console|PlayConsole]].
 
 ```bash
 $ cd my-first-app
 $ activator
 ```
-
-> If you wish to use other Activator templates, you can do this by running `activator new`.  This will prompt you for an application name, and then give you a chance to browse and select an appropriate template.
 
 ## Create a new application with the Activator UI
 
@@ -40,7 +40,7 @@ New Play applications can also be created with the Activator UI.  To use the Act
 $ activator ui
 ```
 
-You can read the documentation for using the Activator UI [here](https://typesafe.com/activator/docs).
+You can read the documentation for using the Activator UI [here](https://lightbend.com/activator/docs).
 
 ## Create a new application without Activator
 
@@ -54,7 +54,7 @@ In `project/plugins.sbt`, add:
 
 ```scala
 // The Typesafe repository
-resolvers += "Typesafe repository" at "https://repo.typesafe.com/typesafe/releases/"
+resolvers += "Typesafe repository" at "https://dl.bintray.com/typesafe/maven-releases/"
 
 // Use the Play sbt plugin for Play projects
 addSbtPlugin("com.typesafe.play" % "sbt-plugin" % "%PLAY_VERSION%")
@@ -62,15 +62,15 @@ addSbtPlugin("com.typesafe.play" % "sbt-plugin" % "%PLAY_VERSION%")
 
 Be sure to replace `%PLAY_VERSION%` here by the exact version you want to use. If you want to use a snapshot version, you will have to specify this additional resolver:
 
-```
+```scala
 // Typesafe snapshots
-resolvers += "Typesafe Snapshots" at "https://repo.typesafe.com/typesafe/snapshots/"
+resolvers += "Typesafe Snapshots" at "https://oss.sonatype.org/content/repositories/snapshots/"
 ```
 
 To ensure the proper sbt version is used, make sure you have the following in `project/build.properties`:
 
 ```
-sbt.version=0.13.5
+sbt.version=0.13.11
 ```
 
 In `build.sbt` for Java projects:

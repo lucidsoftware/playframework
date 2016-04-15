@@ -1,9 +1,7 @@
 /*
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2016 Lightbend Inc. <https://www.lightbend.com>
  */
 package play.api.data.validation
-
-import play.api.data._
 
 /**
  * A form constraint.
@@ -73,7 +71,7 @@ trait Constraints {
    * '''name'''[constraint.email]
    * '''error'''[error.email]
    */
-  private val emailRegex = """^(?!\.)("([^"\r\\]|\\["\r\\])*"|([-a-zA-Z0-9!#$%&'*+/=?^_`{|}~]|(?<!\.)\.)*)(?<!\.)@[a-zA-Z0-9][\w\.-]*[a-zA-Z0-9]\.[a-zA-Z][a-zA-Z\.]*[a-zA-Z]$""".r
+  private val emailRegex = """^[a-zA-Z0-9\.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$""".r
   def emailAddress: Constraint[String] = Constraint[String]("constraint.email") { e =>
     if (e == null) Invalid(ValidationError("error.email"))
     else if (e.trim.isEmpty) Invalid(ValidationError("error.email"))
@@ -178,7 +176,7 @@ case class Invalid(errors: Seq[ValidationError]) extends ValidationResult {
   /**
    * Combines these validation errors with another validation failure.
    *
-   * @param another validation failure
+   * @param other validation failure
    * @return a new merged `Invalid`
    */
   def ++(other: Invalid): Invalid = Invalid(this.errors ++ other.errors)
